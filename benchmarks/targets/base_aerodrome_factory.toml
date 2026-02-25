@@ -1,0 +1,5 @@
+name = "base-aerodrome-factory"
+address = "0x420DD381b31aEf6683db6B902084cB0FFECe40Da"
+chain_id = 8453
+expected_surface = "factory, amm, pool-enumeration"
+notes = "Starter live target for factory-discovery and AMM objective coverage."

@@ -1,0 +1,5 @@
+name = "base-uniswap-v3-factory"
+address = "0x33128a8fC17869897dcE68Ed026d694621f6FDfD"
+chain_id = 8453
+expected_surface = "factory, pool-creation, callback discovery"
+notes = "Starter live target for factory, callback, and AMM surface coverage."

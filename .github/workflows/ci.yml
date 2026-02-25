@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.0
+          components: clippy,rustfmt
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cargo check
+        run: cargo check --workspace --all-targets --release
+
+      - name: Startup probe anchor
+        run: cargo test --quiet --test anchors startup_rpc_probe_validated_config
+
+      - name: Discovery decode anchor
+        run: cargo test --quiet --test anchors discovery_decode_fail_closed
+
+      - name: Priority queue anchor
+        run: cargo test --quiet --test anchors priority_hot_lane_ingestion
+
+      - name: ABI decoder unit tests
+        run: cargo test --quiet decode_abi_
+
+      - name: Queue promotion unit tests
+        run: cargo test --quiet target_queue_promotes

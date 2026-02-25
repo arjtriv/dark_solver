@@ -1,0 +1,134 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\title{DarkSolver Technical Overview}
+\author{DarkSolver Research Notes}
+\date{March 12, 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+DarkSolver is a simulation-first EVM auditing primitive that combines symbolic execution, protocol-aware objective generation, and replay-based validation. This note summarizes the state transition model, the storage abstraction strategy, and the Keccak-to-SMT mapping used in the repository's current public workflow.
+\end{abstract}
+
+\section{Symbolic State}
+
+We model an execution state as
+\[
+\Sigma = \langle pc, gas, stack, mem, stor, env, path, journal \rangle
+\]
+where \(pc\) is the program counter, \(gas\) is the remaining gas budget, \(stack\) and \(mem\) are EVM machine components, \(stor\) is the symbolic storage view, \(env\) captures transaction and block context, \(path\) is the accumulated path predicate, and \(journal\) stores replay-relevant side effects.
+
+For a bytecode image \(B\) and opcode \(op = B[pc]\), DarkSolver applies a symbolic transition function
+\[
+\delta : \Sigma \times op \rightarrow \mathcal{P}(\Sigma)
+\]
+that returns zero, one, or multiple successor states depending on whether the opcode is terminal, deterministic, or branch-producing.
+
+\paragraph{Fail-Closed Branching.}
+When a branch cannot be modeled soundly with the available constraints, the engine treats it as a terminal failure instead of manufacturing a permissive successor. This design bias is used across stack underflow handling, malformed ABI decoding, and uncertain hydration responses.
+
+\section{Constraint Domain}
+
+The solver operates in Z3's quantifier-free bit-vector fragment:
+\[
+\texttt{QF\_ABV}
+\]
+which matches EVM machine arithmetic more closely than floating-point or integer-relaxed encodings.
+
+Representative arithmetic rules are expressed as fixed-width transformations:
+\[
+\operatorname{ADD}_{256}(x, y) = (x + y) \bmod 2^{256}
+\]
+\[
+\operatorname{MUL}_{512}(x, y) = \operatorname{zeroExtend}_{256}(x) \cdot \operatorname{zeroExtend}_{256}(y)
+\]
+
+The second form is used in invariant comparisons where modular wrap-around would otherwise hide violations in reserve-product or basis-point drift checks.
+
+\section{Storage Abstraction}
+
+DarkSolver does not treat storage as a flat map alone. Instead it maintains:
+\begin{enumerate}[leftmargin=1.5em]
+  \item a raw slot-addressed storage view,
+  \item a shadow structured view derived from SHA3 trace inference, and
+  \item projection constraints that connect structured keys to concrete hashed slots.
+\end{enumerate}
+
+For a traced preimage \(p = k \mathbin\Vert s\) representing \texttt{keccak256(key . slot)}, the engine records the tuple
+\[
+\tau = \langle p, h, n, pc \rangle
+\]
+where \(h\) is the resulting hash term and \(n\) is the traced input width. Pattern inference then classifies traces into cases such as:
+\[
+\texttt{FlatMapping}(slot)
+\qquad
+\texttt{NestedMapping}(slot, depth)
+\qquad
+\texttt{DynamicArray}(slot)
+\]
+
+This allows reads and writes to attach symbolic meaning to storage accesses that would otherwise collapse into unrelated opaque keys.
+
+\section{Keccak Modeling}
+
+Direct bit-precise modeling of \texttt{keccak256} is generally too expensive for the intended audit workflow, so DarkSolver maps traced invocations into size-specialized uninterpreted functions:
+\[
+K_{32}, K_{64}, K_{96}, K_{128} : \{0,1\}^{8n} \rightarrow \{0,1\}^{256}
+\]
+
+For a 64-byte preimage \(p\), the hash term is represented as
+\[
+h = K_{64}(p)
+\]
+while auxiliary projection constraints preserve relationships between concrete witnesses and symbolic keys. This gives the engine a usable compromise between scalability and structure recovery.
+
+\paragraph{Interpretation Discipline.}
+The uninterpreted-function layer is not treated as a proof of cryptographic behavior. It is instead a symbolic naming mechanism that preserves equality, disequality, and structured storage projections under bounded assumptions.
+
+\section{Objective Execution}
+
+The repository's objective catalog builds protocol-aware queries over hydrated state. Each objective is executed in an isolated solver context, producing one of:
+\[
+\{\texttt{SAT}, \texttt{UNSAT}, \texttt{TIMEOUT}, \texttt{PANIC}\}
+\]
+and the runner records per-objective timing and status for later audit review.
+
+Candidate findings are admitted only after additional gates such as solvency checks, slippage sanity, or reserve-product consistency are applied. Formally, a candidate \(c\) is reportable only if
+\[
+\operatorname{SAT}(c) \land G_{\text{solvency}}(c) \land G_{\text{price}}(c) \land G_{k}(c)
+\]
+where the individual \(G\) terms denote invariant families implemented in the solver and verifier layers.
+
+\section{Replay Validation}
+
+DarkSolver's public workflow is simulation-only. After symbolic admission, a candidate path is replayed against pinned state with explicit block and timestamp context. The replay phase measures:
+\begin{itemize}[leftmargin=1.5em]
+  \item execution success or revert classification,
+  \item gas usage and failure step,
+  \item mark-to-market balance deltas, and
+  \item pricing coverage / stale oracle statistics.
+\end{itemize}
+
+This replay stage is what turns a satisfiable symbolic path into a reportable audit artifact.
+
+\section{Repository Positioning}
+
+The repository is intentionally structured as a research primitive:
+\begin{itemize}[leftmargin=1.5em]
+  \item \texttt{src/} contains the core Rust implementation,
+  \item \texttt{docs/} contains architecture and yellowpaper-style output,
+  \item \texttt{benchmarks/} contains manifest-driven evaluation harnesses, and
+  \item \texttt{reports/} contains example exploit writeups.
+\end{itemize}
+
+This separation keeps exploratory work visible without diluting the core engine surface.
+
+\end{document}

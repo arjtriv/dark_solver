@@ -1,0 +1,5 @@
+name = "base-aave-v3-pool"
+address = "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5"
+chain_id = 8453
+expected_surface = "lending, liquidation, interest-rate"
+notes = "Starter live target for lending and solvency objective coverage."
