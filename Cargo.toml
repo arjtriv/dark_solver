@@ -1,0 +1,37 @@
+[package]
+name = "dark_solver"
+version = "0.1.0"
+edition = "2021"
+description = "Deterministic EVM contract risk analysis via symbolic execution and SMT solving"
+default-run = "deep_sniper"
+
+[dependencies]
+revm = { version = "19.0.0", default-features = false, features = ["std", "secp256k1"] }
+alloy = { version = "0.9.2", features = ["full"] }
+z3 = { version = "0.12", features = ["static-link-z3"] } # Static link keeps the build self-contained on machines without a system Z3 install
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+anyhow = "1.0"
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+serde = { version = "=1.0.197", features = ["derive"] }
+serde_json = "=1.0.114"
+dashmap = "6.1.0"
+hex = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-trait = "0.1"
+thiserror = "1.0"
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[features]
+default = []
+
+[dev-dependencies]
+proptest = "1.6"
+
+
+
+[profile.release]
+strip = true  # Strip symbols from release binaries.
+lto = true    # Enable link-time optimization.
+codegen-units = 1 # Favor runtime performance over compile speed.

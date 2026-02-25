@@ -1,0 +1,7 @@
+# Runtime strategy overrides (hot-swappable when `STRATEGY_HOT_SWAP_ENABLED=true`).
+# The watcher polls this file and applies updates atomically.
+
+min_expected_profit_wei = "50000000000000"
+objective_allowlist = ""
+objective_denylist = ""
+objective_max_per_target = 3
