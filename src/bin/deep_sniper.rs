@@ -8,7 +8,7 @@ use dark_solver::utils::rpc::RobustRpc;
 use std::str::FromStr;
 use std::sync::Arc;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Args {
     address: Address,
     rpc_url: String,
@@ -22,14 +22,18 @@ fn print_usage() {
     );
 }
 
-fn parse_args() -> Result<Args> {
+fn parse_args_from_iter<I, S>(iter: I) -> Result<Args>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
     let mut address_raw: Option<String> = None;
     let mut rpc_url = std::env::var("ETH_RPC_URL")
         .ok()
         .or_else(|| std::env::var("RPC_URL").ok());
     let mut chain_id: Option<u64> = None;
 
-    let mut iter = std::env::args().skip(1);
+    let mut iter = iter.into_iter().map(Into::into);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--help" | "-h" => {
@@ -72,6 +76,10 @@ fn parse_args() -> Result<Args> {
         rpc_url,
         chain_id,
     })
+}
+
+fn parse_args() -> Result<Args> {
+    parse_args_from_iter(std::env::args().skip(1))
 }
 
 #[tokio::main]
@@ -159,4 +167,63 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_args_from_iter, Args};
+    use alloy::primitives::Address;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn clear_env() {
+        std::env::remove_var("ETH_RPC_URL");
+        std::env::remove_var("RPC_URL");
+    }
+
+    #[test]
+    fn parse_args_from_iter_accepts_explicit_values() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+
+        let args = parse_args_from_iter([
+            "--address",
+            "0x1111111111111111111111111111111111111111",
+            "--rpc-url",
+            "https://rpc.example",
+            "--chain-id",
+            "8453",
+        ])
+        .expect("parse");
+
+        assert_eq!(
+            args,
+            Args {
+                address: Address::from([0x11; 20]),
+                rpc_url: "https://rpc.example".to_string(),
+                chain_id: Some(8453),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_args_from_iter_uses_rpc_env_fallback() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+        std::env::set_var("ETH_RPC_URL", "https://env-rpc.example");
+
+        let args =
+            parse_args_from_iter(["--address", "0x2222222222222222222222222222222222222222"])
+                .expect("parse");
+
+        assert_eq!(args.address, Address::from([0x22; 20]));
+        assert_eq!(args.rpc_url, "https://env-rpc.example");
+        assert_eq!(args.chain_id, None);
+
+        clear_env();
+    }
 }
