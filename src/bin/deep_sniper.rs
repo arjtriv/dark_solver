@@ -14,11 +14,13 @@ struct Args {
     rpc_url: String,
     chain_id: Option<u64>,
     objective_allowlist: Option<String>,
+    objective_denylist: Option<String>,
+    objective_max_per_target: Option<usize>,
 }
 
 fn print_usage() {
     eprintln!(
-        "usage: deep_sniper (single-target audit) --address <0x...> [--rpc-url <url>] [--chain-id <id>] [--objective-allowlist <csv>]\n\
+        "usage: deep_sniper (single-target audit) --address <0x...> [--rpc-url <url>] [--chain-id <id>] [--objective-allowlist <csv>] [--objective-denylist <csv>] [--objective-max-per-target <n>]\n\
          env fallback: ETH_RPC_URL or RPC_URL"
     );
 }
@@ -34,6 +36,8 @@ where
         .or_else(|| std::env::var("RPC_URL").ok());
     let mut chain_id: Option<u64> = None;
     let mut objective_allowlist: Option<String> = None;
+    let mut objective_denylist: Option<String> = None;
+    let mut objective_max_per_target: Option<usize> = None;
 
     let mut iter = iter.into_iter().map(Into::into);
     while let Some(arg) = iter.next() {
@@ -69,6 +73,21 @@ where
                         .ok_or_else(|| anyhow!("missing value for {arg}"))?,
                 );
             }
+            "--objective-denylist" | "--denylist" => {
+                objective_denylist = Some(
+                    iter.next()
+                        .ok_or_else(|| anyhow!("missing value for {arg}"))?,
+                );
+            }
+            "--objective-max-per-target" | "--objective-max" => {
+                let raw = iter
+                    .next()
+                    .ok_or_else(|| anyhow!("missing value for {arg}"))?;
+                objective_max_per_target = Some(
+                    raw.parse::<usize>()
+                        .map_err(|e| anyhow!("invalid objective cap '{raw}': {e}"))?,
+                );
+            }
             other => return Err(anyhow!("unknown argument '{other}'")),
         }
     }
@@ -84,6 +103,8 @@ where
         rpc_url,
         chain_id,
         objective_allowlist,
+        objective_denylist,
+        objective_max_per_target,
     })
 }
 
@@ -96,6 +117,12 @@ async fn main() -> Result<()> {
     let args = parse_args().inspect_err(|_| print_usage())?;
     if let Some(allowlist) = &args.objective_allowlist {
         std::env::set_var("OBJECTIVE_ALLOWLIST", allowlist);
+    }
+    if let Some(denylist) = &args.objective_denylist {
+        std::env::set_var("OBJECTIVE_DENYLIST", denylist);
+    }
+    if let Some(cap) = args.objective_max_per_target {
+        std::env::set_var("OBJECTIVE_MAX_PER_TARGET", cap.to_string());
     }
     let chain_id = match args.chain_id {
         Some(id) => id,
@@ -196,6 +223,8 @@ mod tests {
         std::env::remove_var("ETH_RPC_URL");
         std::env::remove_var("RPC_URL");
         std::env::remove_var("OBJECTIVE_ALLOWLIST");
+        std::env::remove_var("OBJECTIVE_DENYLIST");
+        std::env::remove_var("OBJECTIVE_MAX_PER_TARGET");
     }
 
     #[test]
@@ -220,6 +249,8 @@ mod tests {
                 rpc_url: "https://rpc.example".to_string(),
                 chain_id: Some(8453),
                 objective_allowlist: None,
+                objective_denylist: None,
+                objective_max_per_target: None,
             }
         );
     }
@@ -238,6 +269,8 @@ mod tests {
         assert_eq!(args.rpc_url, "https://env-rpc.example");
         assert_eq!(args.chain_id, None);
         assert_eq!(args.objective_allowlist, None);
+        assert_eq!(args.objective_denylist, None);
+        assert_eq!(args.objective_max_per_target, None);
 
         clear_env();
     }
@@ -259,5 +292,30 @@ mod tests {
 
         assert_eq!(args.address, Address::from([0x33; 20]));
         assert_eq!(args.objective_allowlist.as_deref(), Some("generic,oracle"));
+    }
+
+    #[test]
+    fn parse_args_from_iter_accepts_objective_denylist_and_cap() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+
+        let args = parse_args_from_iter([
+            "--address",
+            "0x4444444444444444444444444444444444444444",
+            "--rpc-url",
+            "https://rpc.example",
+            "--objective-denylist",
+            "reentrancy,governance",
+            "--objective-max",
+            "6",
+        ])
+        .expect("parse");
+
+        assert_eq!(args.address, Address::from([0x44; 20]));
+        assert_eq!(
+            args.objective_denylist.as_deref(),
+            Some("reentrancy,governance")
+        );
+        assert_eq!(args.objective_max_per_target, Some(6));
     }
 }
