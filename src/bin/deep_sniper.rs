@@ -13,11 +13,12 @@ struct Args {
     address: Address,
     rpc_url: String,
     chain_id: Option<u64>,
+    objective_allowlist: Option<String>,
 }
 
 fn print_usage() {
     eprintln!(
-        "usage: deep_sniper (single-target audit) --address <0x...> [--rpc-url <url>] [--chain-id <id>]\n\
+        "usage: deep_sniper (single-target audit) --address <0x...> [--rpc-url <url>] [--chain-id <id>] [--objective-allowlist <csv>]\n\
          env fallback: ETH_RPC_URL or RPC_URL"
     );
 }
@@ -32,6 +33,7 @@ where
         .ok()
         .or_else(|| std::env::var("RPC_URL").ok());
     let mut chain_id: Option<u64> = None;
+    let mut objective_allowlist: Option<String> = None;
 
     let mut iter = iter.into_iter().map(Into::into);
     while let Some(arg) = iter.next() {
@@ -61,6 +63,12 @@ where
                         .map_err(|e| anyhow!("invalid chain id '{raw}': {e}"))?,
                 );
             }
+            "--objective-allowlist" | "--allowlist" => {
+                objective_allowlist = Some(
+                    iter.next()
+                        .ok_or_else(|| anyhow!("missing value for {arg}"))?,
+                );
+            }
             other => return Err(anyhow!("unknown argument '{other}'")),
         }
     }
@@ -75,6 +83,7 @@ where
         address,
         rpc_url,
         chain_id,
+        objective_allowlist,
     })
 }
 
@@ -85,6 +94,9 @@ fn parse_args() -> Result<Args> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = parse_args().inspect_err(|_| print_usage())?;
+    if let Some(allowlist) = &args.objective_allowlist {
+        std::env::set_var("OBJECTIVE_ALLOWLIST", allowlist);
+    }
     let chain_id = match args.chain_id {
         Some(id) => id,
         None => {
@@ -183,6 +195,7 @@ mod tests {
     fn clear_env() {
         std::env::remove_var("ETH_RPC_URL");
         std::env::remove_var("RPC_URL");
+        std::env::remove_var("OBJECTIVE_ALLOWLIST");
     }
 
     #[test]
@@ -206,6 +219,7 @@ mod tests {
                 address: Address::from([0x11; 20]),
                 rpc_url: "https://rpc.example".to_string(),
                 chain_id: Some(8453),
+                objective_allowlist: None,
             }
         );
     }
@@ -223,7 +237,27 @@ mod tests {
         assert_eq!(args.address, Address::from([0x22; 20]));
         assert_eq!(args.rpc_url, "https://env-rpc.example");
         assert_eq!(args.chain_id, None);
+        assert_eq!(args.objective_allowlist, None);
 
         clear_env();
+    }
+
+    #[test]
+    fn parse_args_from_iter_accepts_objective_allowlist() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+
+        let args = parse_args_from_iter([
+            "--address",
+            "0x3333333333333333333333333333333333333333",
+            "--rpc-url",
+            "https://rpc.example",
+            "--objective-allowlist",
+            "generic,oracle",
+        ])
+        .expect("parse");
+
+        assert_eq!(args.address, Address::from([0x33; 20]));
+        assert_eq!(args.objective_allowlist.as_deref(), Some("generic,oracle"));
     }
 }
