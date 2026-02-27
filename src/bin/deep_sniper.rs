@@ -16,13 +16,22 @@ struct Args {
     objective_allowlist: Option<String>,
     objective_denylist: Option<String>,
     objective_max_per_target: Option<usize>,
+    objective_deep_scan: Option<bool>,
 }
 
 fn print_usage() {
     eprintln!(
-        "usage: deep_sniper (single-target audit) --address <0x...> [--rpc-url <url>] [--chain-id <id>] [--objective-allowlist <csv>] [--objective-denylist <csv>] [--objective-max-per-target <n>]\n\
+        "usage: deep_sniper (single-target audit) --address <0x...> [--rpc-url <url>] [--chain-id <id>] [--objective-allowlist <csv>] [--objective-denylist <csv>] [--objective-max-per-target <n>] [--deep-scan <on|off>]\n\
          env fallback: ETH_RPC_URL or RPC_URL"
     );
+}
+
+fn parse_bool_flag(raw: &str, name: &str) -> Result<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(anyhow!("invalid {name} '{raw}': expected on/off")),
+    }
 }
 
 fn parse_args_from_iter<I, S>(iter: I) -> Result<Args>
@@ -38,6 +47,7 @@ where
     let mut objective_allowlist: Option<String> = None;
     let mut objective_denylist: Option<String> = None;
     let mut objective_max_per_target: Option<usize> = None;
+    let mut objective_deep_scan: Option<bool> = None;
 
     let mut iter = iter.into_iter().map(Into::into);
     while let Some(arg) = iter.next() {
@@ -88,6 +98,12 @@ where
                         .map_err(|e| anyhow!("invalid objective cap '{raw}': {e}"))?,
                 );
             }
+            "--deep-scan" => {
+                let raw = iter
+                    .next()
+                    .ok_or_else(|| anyhow!("missing value for {arg}"))?;
+                objective_deep_scan = Some(parse_bool_flag(&raw, "deep scan mode")?);
+            }
             other => return Err(anyhow!("unknown argument '{other}'")),
         }
     }
@@ -105,6 +121,7 @@ where
         objective_allowlist,
         objective_denylist,
         objective_max_per_target,
+        objective_deep_scan,
     })
 }
 
@@ -123,6 +140,9 @@ async fn main() -> Result<()> {
     }
     if let Some(cap) = args.objective_max_per_target {
         std::env::set_var("OBJECTIVE_MAX_PER_TARGET", cap.to_string());
+    }
+    if let Some(deep_scan) = args.objective_deep_scan {
+        std::env::set_var("OBJECTIVE_DEEP_SCAN", deep_scan.to_string());
     }
     let chain_id = match args.chain_id {
         Some(id) => id,
@@ -225,6 +245,7 @@ mod tests {
         std::env::remove_var("OBJECTIVE_ALLOWLIST");
         std::env::remove_var("OBJECTIVE_DENYLIST");
         std::env::remove_var("OBJECTIVE_MAX_PER_TARGET");
+        std::env::remove_var("OBJECTIVE_DEEP_SCAN");
     }
 
     #[test]
@@ -251,6 +272,7 @@ mod tests {
                 objective_allowlist: None,
                 objective_denylist: None,
                 objective_max_per_target: None,
+                objective_deep_scan: None,
             }
         );
     }
@@ -271,6 +293,7 @@ mod tests {
         assert_eq!(args.objective_allowlist, None);
         assert_eq!(args.objective_denylist, None);
         assert_eq!(args.objective_max_per_target, None);
+        assert_eq!(args.objective_deep_scan, None);
 
         clear_env();
     }
@@ -317,5 +340,24 @@ mod tests {
             Some("reentrancy,governance")
         );
         assert_eq!(args.objective_max_per_target, Some(6));
+    }
+
+    #[test]
+    fn parse_args_from_iter_accepts_deep_scan_toggle() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+
+        let args = parse_args_from_iter([
+            "--address",
+            "0x5555555555555555555555555555555555555555",
+            "--rpc-url",
+            "https://rpc.example",
+            "--deep-scan",
+            "off",
+        ])
+        .expect("parse");
+
+        assert_eq!(args.address, Address::from([0x55; 20]));
+        assert_eq!(args.objective_deep_scan, Some(false));
     }
 }
