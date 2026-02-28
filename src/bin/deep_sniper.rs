@@ -2,7 +2,7 @@ use alloy::primitives::Address;
 use alloy::providers::{Provider, ProviderBuilder};
 use anyhow::{anyhow, Context, Result};
 use dark_solver::engine::objective_catalog::build_objectives;
-use dark_solver::engine::runner::run_objectives_parallel;
+use dark_solver::engine::runner::{run_objectives_parallel, run_objectives_parallel_detailed};
 use dark_solver::engine::setup::hydrate_target_context;
 use dark_solver::utils::rpc::RobustRpc;
 use std::str::FromStr;
@@ -18,11 +18,12 @@ struct Args {
     objective_max_per_target: Option<usize>,
     objective_deep_scan: Option<bool>,
     pin_block_number: Option<u64>,
+    objective_status: bool,
 }
 
 fn print_usage() {
     eprintln!(
-        "usage: deep_sniper (single-target audit) --address <0x...> [--rpc-url <url>] [--chain-id <id>] [--objective-allowlist <csv>] [--objective-denylist <csv>] [--objective-max-per-target <n>] [--deep-scan <on|off>] [--pin-block-number <n>]\n\
+        "usage: deep_sniper (single-target audit) --address <0x...> [--rpc-url <url>] [--chain-id <id>] [--objective-allowlist <csv>] [--objective-denylist <csv>] [--objective-max-per-target <n>] [--deep-scan <on|off>] [--pin-block-number <n>] [--objective-status]\n\
          env fallback: ETH_RPC_URL or RPC_URL"
     );
 }
@@ -32,6 +33,15 @@ fn parse_bool_flag(raw: &str, name: &str) -> Result<bool> {
         "1" | "true" | "yes" | "on" => Ok(true),
         "0" | "false" | "no" | "off" => Ok(false),
         _ => Err(anyhow!("invalid {name} '{raw}': expected on/off")),
+    }
+}
+
+fn objective_status_label(status: &dark_solver::engine::runner::ObjectiveRunStatus) -> &str {
+    match status {
+        dark_solver::engine::runner::ObjectiveRunStatus::Sat => "sat",
+        dark_solver::engine::runner::ObjectiveRunStatus::Unsat => "unsat",
+        dark_solver::engine::runner::ObjectiveRunStatus::Panic(_) => "panic",
+        dark_solver::engine::runner::ObjectiveRunStatus::Timeout => "timeout",
     }
 }
 
@@ -50,6 +60,7 @@ where
     let mut objective_max_per_target: Option<usize> = None;
     let mut objective_deep_scan: Option<bool> = None;
     let mut pin_block_number: Option<u64> = None;
+    let mut objective_status = false;
 
     let mut iter = iter.into_iter().map(Into::into);
     while let Some(arg) = iter.next() {
@@ -115,6 +126,9 @@ where
                         .map_err(|e| anyhow!("invalid block number '{raw}': {e}"))?,
                 );
             }
+            "--objective-status" => {
+                objective_status = true;
+            }
             other => return Err(anyhow!("unknown argument '{other}'")),
         }
     }
@@ -134,6 +148,7 @@ where
         objective_max_per_target,
         objective_deep_scan,
         pin_block_number,
+        objective_status,
     })
 }
 
@@ -204,9 +219,31 @@ async fn main() -> Result<()> {
     let objectives = build_objectives(args.rpc_url.clone(), chain_id);
 
     let started = std::time::Instant::now();
-    let findings = run_objectives_parallel(objectives, &bytecode, Some(target_context))
-        .await
-        .context("parallel objective runner failed")?;
+    let findings = if args.objective_status {
+        let (records, findings) =
+            run_objectives_parallel_detailed(objectives, &bytecode, Some(target_context), None)
+                .await
+                .context("parallel objective runner failed")?;
+        for record in &records {
+            println!(
+                "[AUDIT][STATUS] objective={} status={} elapsed_ms={}",
+                record.objective,
+                objective_status_label(&record.status),
+                record.elapsed_ms
+            );
+            if let dark_solver::engine::runner::ObjectiveRunStatus::Panic(message) = &record.status {
+                println!(
+                    "[AUDIT][STATUS] objective={} panic_message={}",
+                    record.objective, message
+                );
+            }
+        }
+        findings
+    } else {
+        run_objectives_parallel(objectives, &bytecode, Some(target_context))
+            .await
+            .context("parallel objective runner failed")?
+    };
     let elapsed_ms = started.elapsed().as_millis();
     println!("[AUDIT] solve_complete elapsed_ms={elapsed_ms}");
 
@@ -290,6 +327,7 @@ mod tests {
                 objective_max_per_target: None,
                 objective_deep_scan: None,
                 pin_block_number: None,
+                objective_status: false,
             }
         );
     }
@@ -312,6 +350,7 @@ mod tests {
         assert_eq!(args.objective_max_per_target, None);
         assert_eq!(args.objective_deep_scan, None);
         assert_eq!(args.pin_block_number, None);
+        assert!(!args.objective_status);
 
         clear_env();
     }
@@ -396,5 +435,23 @@ mod tests {
 
         assert_eq!(args.address, Address::from([0x66; 20]));
         assert_eq!(args.pin_block_number, Some(27_519_043));
+    }
+
+    #[test]
+    fn parse_args_from_iter_accepts_objective_status_flag() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+
+        let args = parse_args_from_iter([
+            "--address",
+            "0x7777777777777777777777777777777777777777",
+            "--rpc-url",
+            "https://rpc.example",
+            "--objective-status",
+        ])
+        .expect("parse");
+
+        assert_eq!(args.address, Address::from([0x77; 20]));
+        assert!(args.objective_status);
     }
 }
