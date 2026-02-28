@@ -17,11 +17,12 @@ struct Args {
     objective_denylist: Option<String>,
     objective_max_per_target: Option<usize>,
     objective_deep_scan: Option<bool>,
+    pin_block_number: Option<u64>,
 }
 
 fn print_usage() {
     eprintln!(
-        "usage: deep_sniper (single-target audit) --address <0x...> [--rpc-url <url>] [--chain-id <id>] [--objective-allowlist <csv>] [--objective-denylist <csv>] [--objective-max-per-target <n>] [--deep-scan <on|off>]\n\
+        "usage: deep_sniper (single-target audit) --address <0x...> [--rpc-url <url>] [--chain-id <id>] [--objective-allowlist <csv>] [--objective-denylist <csv>] [--objective-max-per-target <n>] [--deep-scan <on|off>] [--pin-block-number <n>]\n\
          env fallback: ETH_RPC_URL or RPC_URL"
     );
 }
@@ -48,6 +49,7 @@ where
     let mut objective_denylist: Option<String> = None;
     let mut objective_max_per_target: Option<usize> = None;
     let mut objective_deep_scan: Option<bool> = None;
+    let mut pin_block_number: Option<u64> = None;
 
     let mut iter = iter.into_iter().map(Into::into);
     while let Some(arg) = iter.next() {
@@ -104,6 +106,15 @@ where
                     .ok_or_else(|| anyhow!("missing value for {arg}"))?;
                 objective_deep_scan = Some(parse_bool_flag(&raw, "deep scan mode")?);
             }
+            "--pin-block-number" | "--pin-block" => {
+                let raw = iter
+                    .next()
+                    .ok_or_else(|| anyhow!("missing value for {arg}"))?;
+                pin_block_number = Some(
+                    raw.parse::<u64>()
+                        .map_err(|e| anyhow!("invalid block number '{raw}': {e}"))?,
+                );
+            }
             other => return Err(anyhow!("unknown argument '{other}'")),
         }
     }
@@ -122,6 +133,7 @@ where
         objective_denylist,
         objective_max_per_target,
         objective_deep_scan,
+        pin_block_number,
     })
 }
 
@@ -143,6 +155,9 @@ async fn main() -> Result<()> {
     }
     if let Some(deep_scan) = args.objective_deep_scan {
         std::env::set_var("OBJECTIVE_DEEP_SCAN", deep_scan.to_string());
+    }
+    if let Some(block_number) = args.pin_block_number {
+        std::env::set_var("FORKDB_PIN_BLOCK_NUMBER", block_number.to_string());
     }
     let chain_id = match args.chain_id {
         Some(id) => id,
@@ -246,6 +261,7 @@ mod tests {
         std::env::remove_var("OBJECTIVE_DENYLIST");
         std::env::remove_var("OBJECTIVE_MAX_PER_TARGET");
         std::env::remove_var("OBJECTIVE_DEEP_SCAN");
+        std::env::remove_var("FORKDB_PIN_BLOCK_NUMBER");
     }
 
     #[test]
@@ -273,6 +289,7 @@ mod tests {
                 objective_denylist: None,
                 objective_max_per_target: None,
                 objective_deep_scan: None,
+                pin_block_number: None,
             }
         );
     }
@@ -294,6 +311,7 @@ mod tests {
         assert_eq!(args.objective_denylist, None);
         assert_eq!(args.objective_max_per_target, None);
         assert_eq!(args.objective_deep_scan, None);
+        assert_eq!(args.pin_block_number, None);
 
         clear_env();
     }
@@ -359,5 +377,24 @@ mod tests {
 
         assert_eq!(args.address, Address::from([0x55; 20]));
         assert_eq!(args.objective_deep_scan, Some(false));
+    }
+
+    #[test]
+    fn parse_args_from_iter_accepts_pin_block_number() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+
+        let args = parse_args_from_iter([
+            "--address",
+            "0x6666666666666666666666666666666666666666",
+            "--rpc-url",
+            "https://rpc.example",
+            "--pin-block",
+            "27519043",
+        ])
+        .expect("parse");
+
+        assert_eq!(args.address, Address::from([0x66; 20]));
+        assert_eq!(args.pin_block_number, Some(27_519_043));
     }
 }
