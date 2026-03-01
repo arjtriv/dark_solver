@@ -19,11 +19,12 @@ struct Args {
     objective_deep_scan: Option<bool>,
     pin_block_number: Option<u64>,
     objective_status: bool,
+    objective_timeout_ms: Option<u64>,
 }
 
 fn print_usage() {
     eprintln!(
-        "usage: deep_sniper (single-target audit) --address <0x...> [--rpc-url <url>] [--chain-id <id>] [--objective-allowlist <csv>] [--objective-denylist <csv>] [--objective-max-per-target <n>] [--deep-scan <on|off>] [--pin-block-number <n>] [--objective-status]\n\
+        "usage: deep_sniper (single-target audit) --address <0x...> [--rpc-url <url>] [--chain-id <id>] [--objective-allowlist <csv>] [--objective-denylist <csv>] [--objective-max-per-target <n>] [--deep-scan <on|off>] [--pin-block-number <n>] [--objective-status] [--objective-timeout-ms <n>]\n\
          env fallback: ETH_RPC_URL or RPC_URL"
     );
 }
@@ -61,6 +62,7 @@ where
     let mut objective_deep_scan: Option<bool> = None;
     let mut pin_block_number: Option<u64> = None;
     let mut objective_status = false;
+    let mut objective_timeout_ms: Option<u64> = None;
 
     let mut iter = iter.into_iter().map(Into::into);
     while let Some(arg) = iter.next() {
@@ -129,6 +131,15 @@ where
             "--objective-status" => {
                 objective_status = true;
             }
+            "--objective-timeout-ms" => {
+                let raw = iter
+                    .next()
+                    .ok_or_else(|| anyhow!("missing value for {arg}"))?;
+                objective_timeout_ms = Some(
+                    raw.parse::<u64>()
+                        .map_err(|e| anyhow!("invalid timeout '{raw}': {e}"))?,
+                );
+            }
             other => return Err(anyhow!("unknown argument '{other}'")),
         }
     }
@@ -149,6 +160,7 @@ where
         objective_deep_scan,
         pin_block_number,
         objective_status,
+        objective_timeout_ms,
     })
 }
 
@@ -221,9 +233,14 @@ async fn main() -> Result<()> {
     let started = std::time::Instant::now();
     let findings = if args.objective_status {
         let (records, findings) =
-            run_objectives_parallel_detailed(objectives, &bytecode, Some(target_context), None)
-                .await
-                .context("parallel objective runner failed")?;
+            run_objectives_parallel_detailed(
+                objectives,
+                &bytecode,
+                Some(target_context),
+                args.objective_timeout_ms,
+            )
+            .await
+            .context("parallel objective runner failed")?;
         for record in &records {
             println!(
                 "[AUDIT][STATUS] objective={} status={} elapsed_ms={}",
@@ -328,6 +345,7 @@ mod tests {
                 objective_deep_scan: None,
                 pin_block_number: None,
                 objective_status: false,
+                objective_timeout_ms: None,
             }
         );
     }
@@ -351,6 +369,7 @@ mod tests {
         assert_eq!(args.objective_deep_scan, None);
         assert_eq!(args.pin_block_number, None);
         assert!(!args.objective_status);
+        assert_eq!(args.objective_timeout_ms, None);
 
         clear_env();
     }
@@ -453,5 +472,24 @@ mod tests {
 
         assert_eq!(args.address, Address::from([0x77; 20]));
         assert!(args.objective_status);
+    }
+
+    #[test]
+    fn parse_args_from_iter_accepts_objective_timeout_ms() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+
+        let args = parse_args_from_iter([
+            "--address",
+            "0x8888888888888888888888888888888888888888",
+            "--rpc-url",
+            "https://rpc.example",
+            "--objective-timeout-ms",
+            "1800",
+        ])
+        .expect("parse");
+
+        assert_eq!(args.address, Address::from([0x88; 20]));
+        assert_eq!(args.objective_timeout_ms, Some(1800));
     }
 }
