@@ -36,6 +36,16 @@ Workflow:
 2. Run identical target analysis with the same objective controls.
 3. Compare finding set, path details, and replay outcomes.
 
+Pinned replay helper:
+
+```bash
+cargo run --bin shadow_replay -- \
+  --rpc-url "$ETH_RPC_URL" \
+  --chain-id <chain_id> \
+  --address <contract_address> \
+  --block-number <block_number>
+```
+
 Value:
 - supports deterministic research notes
 - improves confidence in triage decisions
