@@ -30,7 +30,17 @@ cp .env.example .env
 ./analyze_target.sh <contract_address> [chain_id]
 ```
 
-3. Collect artifacts:
+3. Re-run a pinned historical block when a finding needs deterministic replay:
+
+```bash
+cargo run --bin shadow_replay -- \
+  --rpc-url "$ETH_RPC_URL" \
+  --chain-id 1 \
+  --address <contract_address> \
+  --block-number <block_number>
+```
+
+4. Collect artifacts:
 - Console output for objective findings and parameters.
 - `logs/target_analysis.log` for review and case-study writeups.
 - `telemetry/` artifacts when telemetry is enabled.
@@ -44,6 +54,9 @@ cp .env.example .env
 - RPC timeout / rate-limit errors:
   - Retry with a higher-quality endpoint.
   - If multiple providers are available, rotate `ETH_RPC_URL` to a healthier endpoint.
+- Replay misses bytecode at a pinned block:
+  - Verify the target was already deployed at the requested block.
+  - Re-run without block pinning first to confirm the address/chain pair is correct.
 
 ## Safety Posture
 
