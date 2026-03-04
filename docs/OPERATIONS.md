@@ -45,6 +45,12 @@ cargo run --bin shadow_replay -- \
 - `logs/target_analysis.log` for review and case-study writeups.
 - `telemetry/` artifacts when telemetry is enabled.
 
+5. Check runtime pressure during longer local sessions:
+
+```bash
+cargo run --bin pressure_report -- --window-secs 3600 --json
+```
+
 ## Failure Modes and Expected Responses
 
 - `ETH_RPC_URL must be set`:
