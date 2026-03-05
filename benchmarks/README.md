@@ -12,6 +12,12 @@ The harness is designed around manifest-driven evaluation so the repository can 
 ./benchmarks/run_benchmarks.sh
 ```
 
+RPC health check before a longer benchmark session:
+
+```bash
+cargo run --bin benchmark_rpc -- --urls "https://rpc-a.example,https://rpc-b.example" --json
+```
+
 Results are written to:
 
 - `benchmarks/results/<timestamp>/summary.tsv`
