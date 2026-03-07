@@ -20,11 +20,12 @@ struct Args {
     pin_block_number: Option<u64>,
     objective_status: bool,
     objective_timeout_ms: Option<u64>,
+    json: bool,
 }
 
 fn print_usage() {
     eprintln!(
-        "usage: deep_sniper (single-target audit) --address <0x...> [--rpc-url <url>] [--chain-id <id>] [--objective-allowlist <csv>] [--objective-denylist <csv>] [--objective-max-per-target <n>] [--deep-scan <on|off>] [--pin-block-number <n>] [--objective-status] [--objective-timeout-ms <n>]\n\
+        "usage: deep_sniper (single-target audit) --address <0x...> [--rpc-url <url>] [--chain-id <id>] [--objective-allowlist <csv>] [--objective-denylist <csv>] [--objective-max-per-target <n>] [--deep-scan <on|off>] [--pin-block-number <n>] [--objective-status] [--objective-timeout-ms <n>] [--json]\n\
          env fallback: ETH_RPC_URL or RPC_URL"
     );
 }
@@ -63,6 +64,7 @@ where
     let mut pin_block_number: Option<u64> = None;
     let mut objective_status = false;
     let mut objective_timeout_ms: Option<u64> = None;
+    let mut json = false;
 
     let mut iter = iter.into_iter().map(Into::into);
     while let Some(arg) = iter.next() {
@@ -140,6 +142,9 @@ where
                         .map_err(|e| anyhow!("invalid timeout '{raw}': {e}"))?,
                 );
             }
+            "--json" => {
+                json = true;
+            }
             other => return Err(anyhow!("unknown argument '{other}'")),
         }
     }
@@ -161,6 +166,7 @@ where
         pin_block_number,
         objective_status,
         objective_timeout_ms,
+        json,
     })
 }
 
@@ -241,18 +247,46 @@ async fn main() -> Result<()> {
             )
             .await
             .context("parallel objective runner failed")?;
-        for record in &records {
-            println!(
-                "[AUDIT][STATUS] objective={} status={} elapsed_ms={}",
-                record.objective,
-                objective_status_label(&record.status),
-                record.elapsed_ms
-            );
-            if let dark_solver::engine::runner::ObjectiveRunStatus::Panic(message) = &record.status {
+        if args.json {
+            let payload = serde_json::json!({
+                "target": format!("{:#x}", args.address),
+                "chain_id": chain_id,
+                "bytecode_bytes": bytecode.len(),
+                "objective_status": records.iter().map(|record| {
+                    serde_json::json!({
+                        "objective": record.objective,
+                        "status": objective_status_label(&record.status),
+                        "elapsed_ms": record.elapsed_ms,
+                        "panic_message": match &record.status {
+                            dark_solver::engine::runner::ObjectiveRunStatus::Panic(message) => Some(message.clone()),
+                            _ => None,
+                        },
+                    })
+                }).collect::<Vec<_>>(),
+                "findings": findings.iter().map(|(objective, params)| {
+                    serde_json::json!({
+                        "objective": objective,
+                        "params": params.to_summary_json(),
+                    })
+                }).collect::<Vec<_>>(),
+            });
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        } else {
+            for record in &records {
                 println!(
-                    "[AUDIT][STATUS] objective={} panic_message={}",
-                    record.objective, message
+                    "[AUDIT][STATUS] objective={} status={} elapsed_ms={}",
+                    record.objective,
+                    objective_status_label(&record.status),
+                    record.elapsed_ms
                 );
+                if let dark_solver::engine::runner::ObjectiveRunStatus::Panic(message) =
+                    &record.status
+                {
+                    println!(
+                        "[AUDIT][STATUS] objective={} panic_message={}",
+                        record.objective, message
+                    );
+                }
             }
         }
         findings
@@ -272,25 +306,41 @@ async fn main() -> Result<()> {
         ));
     }
 
-    for (objective, params) in findings {
-        println!("\n[AUDIT] objective={objective}");
-        println!(
-            "  flash_loan amount={} token={:?} provider={:?}",
-            params.flash_loan_amount, params.flash_loan_token, params.flash_loan_provider
-        );
-        if let Some(profit) = params.expected_profit {
-            println!("  expected_profit={profit}");
-        }
-        if let Some(offsets) = &params.block_offsets {
-            println!("  block_offsets={offsets:?}");
-        }
-        for (idx, step) in params.steps.iter().enumerate() {
+    if args.json && !args.objective_status {
+        let payload = serde_json::json!({
+            "target": format!("{:#x}", args.address),
+            "chain_id": chain_id,
+            "bytecode_bytes": bytecode.len(),
+            "elapsed_ms": elapsed_ms,
+            "findings": findings.iter().map(|(objective, params)| {
+                serde_json::json!({
+                    "objective": objective,
+                    "params": params.to_summary_json(),
+                })
+            }).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else if !args.json {
+        for (objective, params) in findings {
+            println!("\n[AUDIT] objective={objective}");
             println!(
-                "  step={} target={:?} calldata=0x{}",
-                idx + 1,
-                step.target,
-                hex::encode(step.call_data.as_ref())
+                "  flash_loan amount={} token={:?} provider={:?}",
+                params.flash_loan_amount, params.flash_loan_token, params.flash_loan_provider
             );
+            if let Some(profit) = params.expected_profit {
+                println!("  expected_profit={profit}");
+            }
+            if let Some(offsets) = &params.block_offsets {
+                println!("  block_offsets={offsets:?}");
+            }
+            for (idx, step) in params.steps.iter().enumerate() {
+                println!(
+                    "  step={} target={:?} calldata=0x{}",
+                    idx + 1,
+                    step.target,
+                    hex::encode(step.call_data.as_ref())
+                );
+            }
         }
     }
 
@@ -346,6 +396,7 @@ mod tests {
                 pin_block_number: None,
                 objective_status: false,
                 objective_timeout_ms: None,
+                json: false,
             }
         );
     }
@@ -370,6 +421,7 @@ mod tests {
         assert_eq!(args.pin_block_number, None);
         assert!(!args.objective_status);
         assert_eq!(args.objective_timeout_ms, None);
+        assert!(!args.json);
 
         clear_env();
     }
@@ -491,5 +543,23 @@ mod tests {
 
         assert_eq!(args.address, Address::from([0x88; 20]));
         assert_eq!(args.objective_timeout_ms, Some(1800));
+    }
+
+    #[test]
+    fn parse_args_from_iter_accepts_json_flag() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+
+        let args = parse_args_from_iter([
+            "--address",
+            "0x9999999999999999999999999999999999999999",
+            "--rpc-url",
+            "https://rpc.example",
+            "--json",
+        ])
+        .expect("parse");
+
+        assert_eq!(args.address, Address::from([0x99; 20]));
+        assert!(args.json);
     }
 }
