@@ -15,6 +15,7 @@ struct Args {
     chain_id: u64,
     target: Address,
     block_number: u64,
+    json: bool,
 }
 
 fn parse_arg<T: FromStr>(raw: &str, name: &str) -> anyhow::Result<T>
@@ -27,7 +28,7 @@ where
 
 fn print_usage() {
     eprintln!(
-        "usage: shadow_replay --rpc-url <url> --chain-id <id> --address <0x...> --block-number <n>\n\
+        "usage: shadow_replay --rpc-url <url> --chain-id <id> --address <0x...> --block-number <n> [--json]\n\
          env fallback: ETH_RPC_URL or RPC_URL"
     );
 }
@@ -43,6 +44,7 @@ where
     let mut chain_id: Option<u64> = None;
     let mut address: Option<Address> = None;
     let mut block_number: Option<u64> = None;
+    let mut json = false;
 
     let mut iter = iter.into_iter().map(Into::into);
     while let Some(arg) = iter.next() {
@@ -75,6 +77,9 @@ where
                     .ok_or_else(|| anyhow::anyhow!("missing value for {arg}"))?;
                 block_number = Some(parse_arg(&raw, "block_number")?);
             }
+            "--json" => {
+                json = true;
+            }
             other => return Err(anyhow::anyhow!("unknown argument '{other}'")),
         }
     }
@@ -85,6 +90,7 @@ where
         chain_id: chain_id.ok_or_else(|| anyhow::anyhow!("--chain-id is required"))?,
         target: address.ok_or_else(|| anyhow::anyhow!("--address is required"))?,
         block_number: block_number.ok_or_else(|| anyhow::anyhow!("--block-number is required"))?,
+        json,
     })
 }
 
@@ -141,19 +147,34 @@ async fn main() -> anyhow::Result<()> {
     let findings = run_objectives_parallel(objectives, &bytecode, Some(target_context))
         .await
         .context("parallel objective runner failed")?;
-    println!(
-        "[SHADOW_REPLAY] target={:?} block={} findings={}",
-        args.target,
-        args.block_number,
-        findings.len()
-    );
-    for (name, params) in &findings {
+    if args.json {
+        let payload = serde_json::json!({
+            "target": format!("{:#x}", args.target),
+            "chain_id": args.chain_id,
+            "block_number": args.block_number,
+            "findings": findings.iter().map(|(objective, params)| {
+                serde_json::json!({
+                    "objective": objective,
+                    "params": params.to_summary_json(),
+                })
+            }).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
         println!(
-            "[SHADOW_REPLAY] objective='{}' steps={} loan={}",
-            name,
-            params.steps.len(),
-            params.flash_loan_amount
+            "[SHADOW_REPLAY] target={:?} block={} findings={}",
+            args.target,
+            args.block_number,
+            findings.len()
         );
+        for (name, params) in &findings {
+            println!(
+                "[SHADOW_REPLAY] objective='{}' steps={} loan={}",
+                name,
+                params.steps.len(),
+                params.flash_loan_amount
+            );
+        }
     }
 
     if findings.is_empty() {
@@ -207,6 +228,7 @@ mod tests {
                 chain_id: 8453,
                 target: Address::from([0x11; 20]),
                 block_number: 1024,
+                json: false,
             }
         );
     }
@@ -230,7 +252,30 @@ mod tests {
         assert_eq!(args.rpc_url, "https://env-rpc.example");
         assert_eq!(args.target, Address::from([0x22; 20]));
         assert_eq!(args.block_number, 2048);
+        assert!(!args.json);
 
         clear_env();
+    }
+
+    #[test]
+    fn parse_args_from_iter_accepts_json_flag() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+
+        let args = parse_args_from_iter([
+            "--rpc-url",
+            "https://rpc.example",
+            "--chain-id",
+            "1",
+            "--address",
+            "0x3333333333333333333333333333333333333333",
+            "--block-number",
+            "4096",
+            "--json",
+        ])
+        .expect("parse");
+
+        assert_eq!(args.target, Address::from([0x33; 20]));
+        assert!(args.json);
     }
 }
