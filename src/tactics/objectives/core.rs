@@ -12,6 +12,7 @@ use revm::db::CacheDB;
 use revm::primitives::{Address, Bytes, TransactTo, U256};
 use revm::Database;
 use revm::Evm;
+use serde_json::Value;
 use std::any::Any;
 use std::cell::OnceCell;
 use std::collections::HashMap;
@@ -25,11 +26,30 @@ pub struct ExecuteIfStorageEq {
     pub equals: U256,
 }
 
+impl ExecuteIfStorageEq {
+    pub fn to_summary_json(&self) -> Value {
+        serde_json::json!({
+            "slot": self.slot.to_string(),
+            "equals": self.equals.to_string(),
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ExploitStep {
     pub target: Address,
     pub call_data: Bytes,
     pub execute_if: Option<ExecuteIfStorageEq>,
+}
+
+impl ExploitStep {
+    pub fn to_summary_json(&self) -> Value {
+        serde_json::json!({
+            "target": format!("{:#x}", self.target),
+            "call_data": format!("0x{}", hex::encode(self.call_data.as_ref())),
+            "execute_if": self.execute_if.as_ref().map(ExecuteIfStorageEq::to_summary_json),
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +58,17 @@ pub struct FlashLoanLeg {
     pub token: Address, // Address::ZERO for native ETH
     pub amount: U256,
     pub fee_bps: u32,
+}
+
+impl FlashLoanLeg {
+    pub fn to_summary_json(&self) -> Value {
+        serde_json::json!({
+            "provider": format!("{:#x}", self.provider),
+            "token": format!("{:#x}", self.token),
+            "amount": self.amount.to_string(),
+            "fee_bps": self.fee_bps,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +80,20 @@ pub struct ExploitParams {
     pub steps: Vec<ExploitStep>,
     pub expected_profit: Option<U256>,
     pub block_offsets: Option<Vec<u64>>, // Per-step block offset (None = all same block)
+}
+
+impl ExploitParams {
+    pub fn to_summary_json(&self) -> Value {
+        serde_json::json!({
+            "flash_loan_amount": self.flash_loan_amount.to_string(),
+            "flash_loan_token": format!("{:#x}", self.flash_loan_token),
+            "flash_loan_provider": format!("{:#x}", self.flash_loan_provider),
+            "flash_loan_legs": self.flash_loan_legs.iter().map(FlashLoanLeg::to_summary_json).collect::<Vec<_>>(),
+            "steps": self.steps.iter().map(ExploitStep::to_summary_json).collect::<Vec<_>>(),
+            "expected_profit": self.expected_profit.map(|value| value.to_string()),
+            "block_offsets": self.block_offsets,
+        })
+    }
 }
 
 struct StickyZ3Worker {
