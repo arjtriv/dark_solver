@@ -1,5 +1,6 @@
 use alloy::providers::Provider;
 use alloy::providers::ProviderBuilder;
+use dark_solver::utils::cli::{extend_csv_strings, normalize_string_list, parse_u64_flag};
 use std::time::Instant;
 use tokio::time::Duration;
 
@@ -26,20 +27,9 @@ fn collect_env_urls() -> Vec<String> {
         }
     }
     if let Ok(hydration) = std::env::var("HYDRATION_RPC_URLS") {
-        for url in hydration.split(',') {
-            let trimmed = url.trim();
-            if !trimmed.is_empty() {
-                urls.push(trimmed.to_string());
-            }
-        }
+        extend_csv_strings(&mut urls, &hydration);
     }
     urls
-}
-
-fn normalize_urls(urls: &mut Vec<String>) {
-    urls.retain(|url| !url.trim().is_empty());
-    urls.sort();
-    urls.dedup();
 }
 
 fn parse_args_from_iter<I, S>(iter: I) -> anyhow::Result<Args>
@@ -68,21 +58,13 @@ where
                 let raw = iter
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("missing value for {arg}"))?;
-                urls.extend(
-                    raw.split(',')
-                        .map(str::trim)
-                        .filter(|item| !item.is_empty())
-                        .map(ToOwned::to_owned),
-                );
+                extend_csv_strings(&mut urls, &raw);
             }
             "--timeout-ms" => {
                 let raw = iter
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("missing value for {arg}"))?;
-                timeout_ms = raw
-                    .trim()
-                    .parse::<u64>()
-                    .map_err(|e| anyhow::anyhow!("invalid timeout '{raw}': {e}"))?;
+                timeout_ms = parse_u64_flag(&raw, "timeout")?;
             }
             "--json" => {
                 json = true;
@@ -91,7 +73,7 @@ where
         }
     }
 
-    normalize_urls(&mut urls);
+    normalize_string_list(&mut urls);
     if urls.is_empty() {
         return Err(anyhow::anyhow!("no RPC URLs provided"));
     }
