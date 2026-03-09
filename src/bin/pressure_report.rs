@@ -1,6 +1,7 @@
 use dark_solver::solver::verification::{
     evaluate_memory_profile_window, evaluate_solve_rate_window,
 };
+use dark_solver::utils::cli::parse_u64_flag;
 
 #[derive(Debug, PartialEq)]
 struct Args {
@@ -43,10 +44,7 @@ where
                 let raw = iter
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("missing value for {arg}"))?;
-                window_secs = raw
-                    .trim()
-                    .parse::<u64>()
-                    .map_err(|e| anyhow::anyhow!("invalid window '{raw}': {e}"))?;
+                window_secs = parse_u64_flag(&raw, "window")?;
             }
             "--json" => {
                 json = true;
