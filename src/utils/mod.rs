@@ -1,6 +1,7 @@
 pub mod abi;
 pub mod binary_log;
 pub mod blackbox;
+pub mod cli;
 pub mod config;
 pub mod constants;
 pub mod env_guard;
