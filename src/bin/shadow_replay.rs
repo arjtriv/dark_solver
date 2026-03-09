@@ -5,6 +5,7 @@ use dark_solver::solver::objectives::{
     ExploitObjective, GenericProfitObjective, OracleSpotObjective,
 };
 use dark_solver::solver::runner::run_objectives_parallel;
+use dark_solver::utils::cli::{env_first_nonempty, parse_u64_flag};
 use revm::DatabaseRef;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -16,14 +17,6 @@ struct Args {
     target: Address,
     block_number: u64,
     json: bool,
-}
-
-fn parse_arg<T: FromStr>(raw: &str, name: &str) -> anyhow::Result<T>
-where
-    <T as FromStr>::Err: std::fmt::Display,
-{
-    raw.parse::<T>()
-        .map_err(|e| anyhow::anyhow!("invalid {name} '{raw}': {e}"))
 }
 
 fn print_usage() {
@@ -38,9 +31,7 @@ where
     I: IntoIterator<Item = S>,
     S: Into<String>,
 {
-    let mut rpc_url = std::env::var("ETH_RPC_URL")
-        .ok()
-        .or_else(|| std::env::var("RPC_URL").ok());
+    let mut rpc_url = env_first_nonempty(&["ETH_RPC_URL", "RPC_URL"]);
     let mut chain_id: Option<u64> = None;
     let mut address: Option<Address> = None;
     let mut block_number: Option<u64> = None;
@@ -63,7 +54,7 @@ where
                 let raw = iter
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("missing value for {arg}"))?;
-                chain_id = Some(parse_arg(&raw, "chain_id")?);
+                chain_id = Some(parse_u64_flag(&raw, "chain_id")?);
             }
             "--address" | "--target" | "-a" => {
                 let raw = iter
@@ -75,7 +66,7 @@ where
                 let raw = iter
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("missing value for {arg}"))?;
-                block_number = Some(parse_arg(&raw, "block_number")?);
+                block_number = Some(parse_u64_flag(&raw, "block_number")?);
             }
             "--json" => {
                 json = true;
