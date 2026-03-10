@@ -4,6 +4,9 @@ use anyhow::{anyhow, Context, Result};
 use dark_solver::engine::objective_catalog::build_objectives;
 use dark_solver::engine::runner::{run_objectives_parallel, run_objectives_parallel_detailed};
 use dark_solver::engine::setup::hydrate_target_context;
+use dark_solver::utils::cli::{
+    env_first_nonempty, parse_bool_flag, parse_u64_flag, parse_usize_flag,
+};
 use dark_solver::utils::rpc::RobustRpc;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -30,14 +33,6 @@ fn print_usage() {
     );
 }
 
-fn parse_bool_flag(raw: &str, name: &str) -> Result<bool> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Ok(true),
-        "0" | "false" | "no" | "off" => Ok(false),
-        _ => Err(anyhow!("invalid {name} '{raw}': expected on/off")),
-    }
-}
-
 fn objective_status_label(status: &dark_solver::engine::runner::ObjectiveRunStatus) -> &str {
     match status {
         dark_solver::engine::runner::ObjectiveRunStatus::Sat => "sat",
@@ -53,9 +48,7 @@ where
     S: Into<String>,
 {
     let mut address_raw: Option<String> = None;
-    let mut rpc_url = std::env::var("ETH_RPC_URL")
-        .ok()
-        .or_else(|| std::env::var("RPC_URL").ok());
+    let mut rpc_url = env_first_nonempty(&["ETH_RPC_URL", "RPC_URL"]);
     let mut chain_id: Option<u64> = None;
     let mut objective_allowlist: Option<String> = None;
     let mut objective_denylist: Option<String> = None;
@@ -110,10 +103,7 @@ where
                 let raw = iter
                     .next()
                     .ok_or_else(|| anyhow!("missing value for {arg}"))?;
-                objective_max_per_target = Some(
-                    raw.parse::<usize>()
-                        .map_err(|e| anyhow!("invalid objective cap '{raw}': {e}"))?,
-                );
+                objective_max_per_target = Some(parse_usize_flag(&raw, "objective cap")?);
             }
             "--deep-scan" => {
                 let raw = iter
@@ -125,10 +115,7 @@ where
                 let raw = iter
                     .next()
                     .ok_or_else(|| anyhow!("missing value for {arg}"))?;
-                pin_block_number = Some(
-                    raw.parse::<u64>()
-                        .map_err(|e| anyhow!("invalid block number '{raw}': {e}"))?,
-                );
+                pin_block_number = Some(parse_u64_flag(&raw, "block number")?);
             }
             "--objective-status" => {
                 objective_status = true;
@@ -137,10 +124,7 @@ where
                 let raw = iter
                     .next()
                     .ok_or_else(|| anyhow!("missing value for {arg}"))?;
-                objective_timeout_ms = Some(
-                    raw.parse::<u64>()
-                        .map_err(|e| anyhow!("invalid timeout '{raw}': {e}"))?,
-                );
+                objective_timeout_ms = Some(parse_u64_flag(&raw, "timeout")?);
             }
             "--json" => {
                 json = true;
