@@ -51,6 +51,12 @@ cargo run --bin shadow_replay -- \
 cargo run --bin pressure_report -- --window-secs 3600 --json
 ```
 
+6. Re-benchmark candidate RPC providers before a longer benchmark or replay campaign:
+
+```bash
+cargo run --bin benchmark_rpc -- --json
+```
+
 ## Failure Modes and Expected Responses
 
 - `ETH_RPC_URL must be set`:
