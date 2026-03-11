@@ -43,6 +43,12 @@ Primary artifacts:
 - `telemetry/` when enabled
 - `reports/` for curated example writeups
 
+Companion tooling:
+
+- `cargo run --bin shadow_replay -- --rpc-url "$ETH_RPC_URL" --chain-id <id> --address <0x...> --block-number <n>`
+- `cargo run --bin benchmark_rpc -- --json`
+- `cargo run --bin pressure_report -- --window-secs 3600 --json`
+
 ## Research Output
 
 - [docs/technical_overview.pdf](docs/technical_overview.pdf): yellowpaper-style overview of the symbolic state transition function, storage abstractions, and Keccak modeling.
@@ -111,6 +117,7 @@ cargo test --quiet target_queue_promotes
 
 - [SETUP.md](SETUP.md)
 - [docs/README.md](docs/README.md)
+- [src/bin/README.md](src/bin/README.md)
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [docs/OPERATIONS.md](docs/OPERATIONS.md)
 - [docs/USE_CASES.md](docs/USE_CASES.md)
