@@ -4,6 +4,7 @@
 
 - `../README.md`: project scope, positioning, quick start, quality gates
 - `../SETUP.md`: environment setup and local validation commands
+- `../src/bin/README.md`: public binary surface beyond `deep_sniper`
 - `technical_overview.pdf`: yellowpaper-style technical overview for external researchers
 - `technical_overview.tex`: LaTeX source for the technical overview
 - `build_technical_overview.sh`: reproducible PDF build script
