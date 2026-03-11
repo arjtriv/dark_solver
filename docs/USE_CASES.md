@@ -50,3 +50,25 @@ Value:
 - supports deterministic research notes
 - improves confidence in triage decisions
 - provides a stable baseline for pre/post-mitigation comparison
+
+## 3. Local Operator Session Hardening
+
+Goal: choose healthier RPC infrastructure, run the audit, then confirm the session stayed within
+the expected memory and solve-budget envelope.
+
+Workflow:
+1. Benchmark candidate RPC providers.
+2. Run `deep_sniper` or `shadow_replay` against the target.
+3. Inspect `pressure_report` before treating the output as a stable local baseline.
+
+Commands:
+
+```bash
+cargo run --bin benchmark_rpc -- --json
+cargo run --bin pressure_report -- --window-secs 3600 --json
+```
+
+Value:
+- catches weak RPC endpoints before they pollute replay timings
+- turns runtime pressure into an explicit review artifact
+- makes repeated local runs easier to compare across days
