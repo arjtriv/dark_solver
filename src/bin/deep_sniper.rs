@@ -546,4 +546,14 @@ mod tests {
         assert_eq!(args.address, Address::from([0x99; 20]));
         assert!(args.json);
     }
+
+    #[test]
+    fn parse_args_from_iter_rejects_missing_address() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+
+        let err = parse_args_from_iter(["--rpc-url", "https://rpc.example"])
+            .expect_err("missing address should fail");
+        assert!(err.to_string().contains("--address is required"));
+    }
 }
