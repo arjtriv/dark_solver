@@ -269,4 +269,22 @@ mod tests {
         assert_eq!(args.target, Address::from([0x33; 20]));
         assert!(args.json);
     }
+
+    #[test]
+    fn parse_args_from_iter_rejects_missing_block_number() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+
+        let err = parse_args_from_iter([
+            "--rpc-url",
+            "https://rpc.example",
+            "--chain-id",
+            "1",
+            "--address",
+            "0x4444444444444444444444444444444444444444",
+        ])
+        .expect_err("missing block number should fail");
+
+        assert!(err.to_string().contains("--block-number is required"));
+    }
 }
