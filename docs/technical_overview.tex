@@ -1,13 +1,92 @@
 \documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
-\usepackage{amsmath,amssymb,mathtools}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{lmodern}
-\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,mathtools,amsthm,bm}
+\usepackage{booktabs,longtable,array}
 \usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
 
-\title{DarkSolver Technical Overview}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  citecolor=black,
+  urlcolor=blue,
+  pdftitle={DarkSolver Technical Overview},
+  pdfauthor={DarkSolver Research Notes}
+}
+
+\allowdisplaybreaks
+\setlength{\parskip}{0.45em}
+\setlength{\parindent}{0pt}
+\setlength{\LTpre}{0pt}
+\setlength{\LTpost}{0pt}
+\numberwithin{equation}{section}
+
+\newtheorem{definition}{Definition}[section]
+\newtheorem{proposition}[definition]{Proposition}
+\newtheorem{assumption}[definition]{Assumption}
+\theoremstyle{remark}
+\newtheorem{remark}[definition]{Remark}
+
+\newcommand{\QFABV}{\texttt{QF\_ABV}}
+\newcommand{\Pow}{\mathcal{P}}
+\newcommand{\Bits}[1]{\{0,1\}^{#1}}
+\newcommand{\Words}[1]{\mathbb{W}_{#1}}
+\newcommand{\Naturals}{\mathbb{N}}
+\newcommand{\Fail}{\bot_{\mathsf{fail}}}
+\newcommand{\Halt}{\bot_{\mathsf{halt}}}
+\newcommand{\States}{\mathcal{S}}
+\newcommand{\StateSpace}{\mathbb{S}}
+\newcommand{\Env}{\mathcal{E}}
+\newcommand{\Ctx}{\Theta}
+\newcommand{\Trace}{\mathcal{T}}
+\newcommand{\Journal}{\mathcal{J}}
+\newcommand{\Path}{\pi}
+\newcommand{\Storage}{\mathsf{stor}}
+\newcommand{\Memory}{\mathsf{mem}}
+\newcommand{\Stack}{\mathsf{stack}}
+\newcommand{\Gas}{\mathsf{gas}}
+\newcommand{\PC}{\mathsf{pc}}
+\newcommand{\Word}{\mathsf{word}}
+\newcommand{\Replay}{\mathsf{Replay}}
+\newcommand{\Hydrate}{\mathsf{Hydrate}}
+\newcommand{\Infer}{\mathsf{Infer}}
+\newcommand{\Gate}{\mathsf{Gate}}
+\newcommand{\Reportable}{\mathsf{Reportable}}
+\newcommand{\sat}{\mathsf{SAT}}
+\newcommand{\unsat}{\mathsf{UNSAT}}
+\newcommand{\timeout}{\mathsf{TIMEOUT}}
+\newcommand{\panicstatus}{\mathsf{PANIC}}
+\newcommand{\Status}{\mathsf{Status}}
+\newcommand{\solv}{\mathsf{solv}}
+\newcommand{\price}{\mathsf{price}}
+\newcommand{\kgate}{\mathsf{k}}
+\newcommand{\zeroextend}{\mathsf{zeroExtend}}
+\newcommand{\Concat}{\mathbin{\|}}
+\newcommand{\Addr}{\mathcal{A}}
+\newcommand{\Targets}{\mathcal{X}}
+\newcommand{\Objectives}{\mathcal{O}}
+\newcommand{\Heur}{\mathcal{H}}
+\newcommand{\Val}{\mathsf{Val}}
+\newcommand{\Profit}{\mathsf{Profit}}
+\newcommand{\Depth}{\mathsf{depth}}
+\newcommand{\Selectors}{\mathsf{sel}}
+\newcommand{\DeadEnds}{\mathsf{dead}}
+\newcommand{\Dependencies}{\mathsf{dep}}
+\newcommand{\Reserves}{\mathsf{res}}
+\newcommand{\Blocks}{\mathcal{B}}
+\newcommand{\Code}{\mathcal{C}}
+\newcommand{\BV}[1]{\operatorname{BV}_{#1}}
+\newcommand{\Lift}[2]{\operatorname{lift}_{#1 \rightarrow #2}}
+\newcommand{\Norm}{\operatorname{norm}_{112}}
+\newcommand{\ZeroState}{\mathsf{ZERO\_STATE}}
+\newcommand{\StepGas}{\mathsf{gas\_step}}
+
+\title{DarkSolver: Formal Verification of EVM Business-Logic Invariants via Bounded \QFABV{} Symbolic Execution}
 \author{DarkSolver Research Notes}
 \date{March 12, 2026}
 
@@ -15,120 +94,1065 @@
 \maketitle
 
 \begin{abstract}
-DarkSolver is a simulation-first EVM auditing primitive that combines symbolic execution, protocol-aware objective generation, and replay-based validation. This note summarizes the state transition model, the storage abstraction strategy, and the Keccak-to-SMT mapping used in the repository's current public workflow.
+DarkSolver is a simulation-first auditing primitive for Ethereum Virtual Machine (EVM) contracts. Its public repository centers on a bounded symbolic execution engine, a target-hydration layer, protocol-aware exploit objectives, invariant-gated admissibility checks, and a replay-oriented verification layer for curating concrete evidence. This document expands the repository's brief technical note into a whitepaper-style description of the implemented analysis model.
+
+The key design choice is to encode EVM business-logic search problems into Z3's quantifier-free array/bit-vector fragment \QFABV{}, preserving EVM word width while remaining tractable enough for protocol-specific objective families. DarkSolver does not claim complete formal verification of arbitrary contracts. Instead, it exposes a bounded, fail-closed search procedure: uncertain branches are terminated rather than permissively approximated, unresolved hydration is treated conservatively, and replay-style evidence is separated from symbolic satisfiability so downstream reporting policy can remain strict.
+
+This paper formalizes the state domain, small-step transition relation, storage and Keccak abstractions, target hydration, objective synthesis, invariant gates, execution-status semantics, and replay-verification interface. It also states the repository's actual guarantees and non-guarantees. The result is intended to be legible to grant reviewers, formal-methods researchers, and engineers comparing the math to the current implementation surface.
 \end{abstract}
 
-\section{Symbolic State}
+\section*{Notation Summary}
 
-We model an execution state as
-\[
-\Sigma = \langle pc, gas, stack, mem, stor, env, path, journal \rangle
-\]
-where \(pc\) is the program counter, \(gas\) is the remaining gas budget, \(stack\) and \(mem\) are EVM machine components, \(stor\) is the symbolic storage view, \(env\) captures transaction and block context, \(path\) is the accumulated path predicate, and \(journal\) stores replay-relevant side effects.
+\begin{longtable}{p{0.17\linewidth}p{0.25\linewidth}p{0.50\linewidth}}
+\toprule
+Symbol & Domain & Meaning \\
+\midrule
+\endfirsthead
+\toprule
+Symbol & Domain & Meaning \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\(B\) & \((\Bits{8})^\ast\) & Target bytecode image. \\
+\(\Gamma\) & \(\Env\) & Chain-level analysis environment: RPC, chain id, base block context, and runtime bounds. \\
+\(\Ctx\) & contextual record & Hydrated target context: address, bytecode metadata, selector slices, dependency snapshots, and zero-state classification. \\
+\(\Sigma\) & \(\StateSpace\) & Symbolic machine state used by the opcode semantics. \\
+\(\PC\) & \(\Naturals\) & Program counter in the current bytecode image. \\
+\(\Gas\) & \(\Words{256}\) & Remaining gas budget or gas-derived symbolic term. \\
+\(\Stack\) & \((\Words{256})^\ast\) & EVM stack represented as a bounded list of 256-bit words. \\
+\(\Memory\) & \(\Naturals \to \Bits{8}\) & Byte-addressable symbolic memory. \\
+\(\Storage\) & \(\Words{256} \to \Words{256}\) & Raw storage-slot map, augmented by structured traces. \\
+\(\Path\) & Boolean formula & Accumulated path predicate over \QFABV{} terms. \\
+\(\Journal\) & nested write log & Side-effect journal used for snapshots, rollback, and replay-relevant accounting. \\
+\(\Trace\) & finite sequence & Sequence of SHA3 trace tuples recorded during symbolic execution. \\
+\(\Reserves\) & finite map & Pair-addressed reserve summaries used by invariant gates. \\
+\(\delta_B\) & \(\StateSpace \to \Pow(\StateSpace \cup \{\Fail,\Halt\})\) & Small-step transition relation induced by bytecode \(B\). \\
+\(\Hydrate\) & \((\Addr,\Gamma) \to \Ctx\) & Target hydration function. \\
+\(\Objectives\) & finite family & Objective constructors instantiated from the objective catalog. \\
+\(\Gate\) & predicate & Triple-gate invariant filter: solvency, price sanity, and reserve-product consistency. \\
+\(\Replay\) & witness \(\times\) env \(\to\) report & Fork-based replay and valuation layer for witness curation. \\
+\(\Status\) & \(\{\sat,\unsat,\timeout,\panicstatus\}\) & Per-objective execution outcome used by the detailed runner. \\
+\(\Reportable\) & policy predicate & Downstream policy that decides whether a symbolic witness plus replay report is strong enough for publication. \\
+\bottomrule
+\end{longtable}
 
-For a bytecode image \(B\) and opcode \(op = B[pc]\), DarkSolver applies a symbolic transition function
-\[
-\delta : \Sigma \times op \rightarrow \mathcal{P}(\Sigma)
-\]
-that returns zero, one, or multiple successor states depending on whether the opcode is terminal, deterministic, or branch-producing.
+\section{Introduction and Problem Statement}
 
-\paragraph{Fail-Closed Branching.}
-When a branch cannot be modeled soundly with the available constraints, the engine treats it as a terminal failure instead of manufacturing a permissive successor. This design bias is used across stack underflow handling, malformed ABI decoding, and uncertain hydration responses.
+Pattern-based smart-contract analyzers are useful for broad screening, but they are poorly matched to protocol-specific business logic. A reserve-product manipulation opportunity, a share-rounding griefing path, or a proxy-initialization race is usually not recognizable from syntax alone. The question of interest is semantic: does there exist a bounded sequence of EVM actions such that a protocol-specific invariant is violated while all machine-level and selected economic constraints remain feasible?
 
-\section{Constraint Domain}
+DarkSolver addresses that question with a symbolic, simulation-first workflow. The repository's public path is organized around single-target analysis: hydrate a contract and a bounded amount of surrounding state, derive a curated family of exploit objectives, solve those objectives in independent Z3 contexts, and emit witness parameters suitable for reproduction or later replay-oriented curation. The design is intentionally not a theorem prover for arbitrary EVM programs. It is a bounded search primitive whose emphasis is on \emph{defensible exploit evidence} rather than exhaustive language-level proof obligations.
 
-The solver operates in Z3's quantifier-free bit-vector fragment:
-\[
-\texttt{QF\_ABV}
-\]
-which matches EVM machine arithmetic more closely than floating-point or integer-relaxed encodings.
+At a high level, the repository materializes the following evidence relation:
+\begin{equation}
+\label{eq:evidence-relation}
+\mathcal{E}_{\mathrm{repo}}(B,\Gamma)
+=
+\left\{
+(o,m,\rho)
+\,\middle|\,
+\begin{array}{l}
+o \in \Objectives(\Gamma), \\
+m \models \Phi_o(B,\Gamma), \\
+\Gate(m,\Gamma), \\
+\rho = \Replay(m,\Gamma), \\
+\Reportable_{\Pi}(m,\rho)
+\end{array}
+\right\},
+\end{equation}
+where \(o\) is an instantiated objective, \(m\) is a satisfying model or witness candidate, \(\Phi_o\) is that objective's symbolic query, \(\Gate\) is the global admissibility filter, \(\rho\) is a replay/valuation report, and \(\Pi\) is an external reporting policy. Equation~\eqref{eq:evidence-relation} is stated at the repository level rather than as a promise that every public CLI command executes every stage unconditionally. In the current codebase, symbolic solving is the primary public command surface, while replay validation lives as a verifier layer and companion tooling used for report curation.
 
-Representative arithmetic rules are expressed as fixed-width transformations:
-\[
-\operatorname{ADD}_{256}(x, y) = (x + y) \bmod 2^{256}
-\]
-\[
-\operatorname{MUL}_{512}(x, y) = \operatorname{zeroExtend}_{256}(x) \cdot \operatorname{zeroExtend}_{256}(y)
-\]
-
-The second form is used in invariant comparisons where modular wrap-around would otherwise hide violations in reserve-product or basis-point drift checks.
-
-\section{Storage Abstraction}
-
-DarkSolver does not treat storage as a flat map alone. Instead it maintains:
+This paper makes four concrete contributions.
 \begin{enumerate}[leftmargin=1.5em]
-  \item a raw slot-addressed storage view,
-  \item a shadow structured view derived from SHA3 trace inference, and
-  \item projection constraints that connect structured keys to concrete hashed slots.
+  \item It gives a mathematically explicit state-transition model for the symbolic EVM execution used in the repository.
+  \item It defines the \QFABV{} encodings and approximation boundaries that make the search practical, especially for width-sensitive arithmetic and Keccak-derived storage.
+  \item It formalizes the repository's protocol-aware objective and invariant pipeline, including the fail-closed execution-status semantics of the parallel runner.
+  \item It states what the implementation actually guarantees, what it only approximates, and what remains out of scope.
 \end{enumerate}
 
-For a traced preimage \(p = k \mathbin\Vert s\) representing \texttt{keccak256(key . slot)}, the engine records the tuple
-\[
-\tau = \langle p, h, n, pc \rangle
-\]
-where \(h\) is the resulting hash term and \(n\) is the traced input width. Pattern inference then classifies traces into cases such as:
-\[
-\texttt{FlatMapping}(slot)
-\qquad
-\texttt{NestedMapping}(slot, depth)
-\qquad
-\texttt{DynamicArray}(slot)
-\]
+The rest of the document follows the public workflow: system model, symbolic semantics, solver encoding, hydration, objectives, global gates, parallel execution, replay validation, correctness posture, boundedness, and limitations.
 
-This allows reads and writes to attach symbolic meaning to storage accesses that would otherwise collapse into unrelated opaque keys.
+\section{System Model and Threat Model}
 
-\section{Keccak Modeling}
+\subsection{Environment}
 
-Direct bit-precise modeling of \texttt{keccak256} is generally too expensive for the intended audit workflow, so DarkSolver maps traced invocations into size-specialized uninterpreted functions:
-\[
-K_{32}, K_{64}, K_{96}, K_{128} : \{0,1\}^{8n} \rightarrow \{0,1\}^{256}
-\]
+DarkSolver analyzes one contract at a time against a chain-aware environment
+\begin{equation}
+\Gamma = \langle \mathsf{chain\_id}, \mathsf{rpc}, b_0, t_0, f_0, \Heur, \Ctx \rangle,
+\label{eq:environment}
+\end{equation}
+where \(\mathsf{chain\_id}\) is the execution chain identifier, \(\mathsf{rpc}\) is the hydration/replay endpoint family, \(b_0\) is the base block number, \(t_0\) is the base timestamp, \(f_0\) is the base fee, \(\Heur\) is the set of runtime bounds and feature toggles, and \(\Ctx\) is the hydrated target context defined later in \cref{sec:hydration}.
 
-For a 64-byte preimage \(p\), the hash term is represented as
-\[
-h = K_{64}(p)
-\]
-while auxiliary projection constraints preserve relationships between concrete witnesses and symbolic keys. This gives the engine a usable compromise between scalability and structure recovery.
+The environment is not static metadata alone. It includes the bounded pre-analysis choices that materially influence tractability: proxy-resolution depth, storage-scan limits, selector slicing, deep-scan enablement, objective caps, and solver timeouts. These are not implementation noise. They define the effective analysis regime under which claims in this paper should be read.
 
-\paragraph{Interpretation Discipline.}
-The uninterpreted-function layer is not treated as a proof of cryptographic behavior. It is instead a symbolic naming mechanism that preserves equality, disequality, and structured storage projections under bounded assumptions.
+\subsection{Adversary Model}
 
-\section{Objective Execution}
+The public workflow assumes an adversary who may choose bounded calldata sequences, attacker-controlled addresses, bounded flash-loan amounts, and optional inter-call block offsets when an objective family supports multi-block modeling. The adversary does \emph{not} control the target bytecode, the base fork state, or the raw EVM semantics. The attacker model is therefore:
+\begin{enumerate}[leftmargin=1.5em]
+  \item EVM-valid calldata can be constructed for selected entry points.
+  \item Caller identity and economically relevant input amounts can be symbolic.
+  \item Objective families may encode protocol-specific attacker actions such as swap sequencing, flash-loan legs, governance votes, or reentrancy-triggering call patterns.
+  \item State evolution remains bounded by the objective-specific search template and the symbolic engine's transition semantics.
+\end{enumerate}
 
-The repository's objective catalog builds protocol-aware queries over hydrated state. Each objective is executed in an isolated solver context, producing one of:
-\[
-\{\texttt{SAT}, \texttt{UNSAT}, \texttt{TIMEOUT}, \texttt{PANIC}\}
-\]
-and the runner records per-objective timing and status for later audit review.
+This is narrower than ``arbitrary omniscient adversary'' reasoning and stronger than pure linting. DarkSolver is explicitly targeted at \emph{bounded exploit search}.
 
-Candidate findings are admitted only after additional gates such as solvency checks, slippage sanity, or reserve-product consistency are applied. Formally, a candidate \(c\) is reportable only if
-\[
-\operatorname{SAT}(c) \land G_{\text{solvency}}(c) \land G_{\text{price}}(c) \land G_{k}(c)
-\]
-where the individual \(G\) terms denote invariant families implemented in the solver and verifier layers.
+\subsection{Out-of-Scope Claims}
 
-\section{Replay Validation}
+Three non-claims should be explicit from the beginning.
+\begin{enumerate}[leftmargin=1.5em]
+  \item The repository does not prove semantic safety for all inputs or all future chain states.
+  \item The repository does not model Keccak cryptographically; it models structured equality and dependence through traced uninterpreted functions.
+  \item The public workflow does not imply that every satisfiable symbolic witness is automatically exploitable on-chain; replay, valuation, and human review remain separate filters.
+\end{enumerate}
 
-DarkSolver's public workflow is simulation-only. After symbolic admission, a candidate path is replayed against pinned state with explicit block and timestamp context. The replay phase measures:
+\begin{assumption}[Bounded objective search]
+\label{ass:bounded-search}
+Every objective instantiated by the public workflow commits to a finite search template: a finite selector set, finite step family, finite structural bounds on hydration, and a finite solver budget.
+\end{assumption}
+
+\begin{remark}
+\Cref{ass:bounded-search} is not a proof obligation invented for exposition. It mirrors the implementation directly: objective counts are capped, proxy expansion is bounded, storage scans are bounded, and solver contexts are configured with explicit timeout and resource limits.
+\end{remark}
+
+\section{EVM State Domain}
+\label{sec:state-domain}
+
+\subsection{Machine state}
+
+DarkSolver's symbolic engine works over a state space \(\StateSpace\) whose elements are tuples
+\begin{equation}
+\label{eq:symbolic-state}
+\Sigma
+=
+\langle
+\PC,
+\Gas,
+\Stack,
+\Memory,
+\Storage,
+\mathsf{env},
+\Path,
+\Journal,
+\Trace,
+\Reserves,
+\mathsf{bal},
+\DeadEnds
+\rangle.
+\end{equation}
+
+Each component has an implementation-grounded role.
 \begin{itemize}[leftmargin=1.5em]
-  \item execution success or revert classification,
-  \item gas usage and failure step,
-  \item mark-to-market balance deltas, and
-  \item pricing coverage / stale oracle statistics.
+  \item \(\PC \in \Naturals\) is the current program counter.
+  \item \(\Gas \in \Words{256}\) is the gas-related symbolic word.
+  \item \(\Stack \in (\Words{256})^\ast\) is the EVM stack.
+  \item \(\Memory : \Naturals \to \Bits{8}\) is byte-addressable memory.
+  \item \(\Storage : \Words{256} \to \Words{256}\) is the raw storage-slot map.
+  \item \(\mathsf{env}\) contains caller, value, block, and chain context.
+  \item \(\Path\) is the path predicate accumulated so far.
+  \item \(\Journal\) is a nested side-effect journal used for snapshots and rollback.
+  \item \(\Trace\) stores SHA3 trace tuples from memory hashing sites.
+  \item \(\Reserves\) maps AMM pairs to manipulated reserve expressions used by invariant gates.
+  \item \(\mathsf{bal}\) records balance overrides, including attacker-side symbolic accounting.
+  \item \(\DeadEnds\) is the set of statically identified PCs that the engine may treat as dead-end control points.
 \end{itemize}
 
-This replay stage is what turns a satisfiable symbolic path into a reportable audit artifact.
+The state is richer than a textbook EVM configuration because the repository is not only interpreting opcodes. It is maintaining analysis-specific summaries needed for downstream admissibility checks and curation. The manipulated reserve map and SHA3 traces are the two clearest examples.
 
-\section{Repository Positioning}
+\subsection{Target context}
 
-The repository is intentionally structured as a research primitive:
+Symbolic execution is parameterized by a target context
+\begin{equation}
+\label{eq:target-context}
+\Ctx
+=
+\langle
+\mathsf{target},
+\mathsf{zero\_state},
+\mathsf{account\_info},
+\mathsf{storage\_slots},
+\Selectors,
+\mathsf{nft\_selectors},
+\DeadEnds,
+\Dependencies
+\rangle.
+\end{equation}
+
+The distinction between \(\Sigma\) and \(\Ctx\) matters. \(\Sigma\) is per-path symbolic state. \(\Ctx\) is the hydrated contract summary shared across objectives: resolved bytecode facts, scanned selector slices, storage snapshots, dependency contexts, and the strict zero-state marker used to avoid phantom-liquidity false positives.
+
+\begin{definition}[Zero-state marker]
+\label{def:zero-state}
+A hydrated target is marked \(\ZeroState\) iff its bytecode is empty, its remote ETH balance is zero or non-existent, its storage scan completed successfully, and the scan returned no non-zero storage slots.
+\end{definition}
+
+This is a deliberately strict definition. Missing storage data does not entitle the analysis to assume emptiness.
+
+\subsection{Witnesses and reports}
+
+An objective-level symbolic witness is a bounded structured artifact
+\begin{equation}
+\label{eq:witness-shape}
+w = \langle \mathsf{loan}, \mathsf{legs}, \mathsf{steps}, \mathsf{offsets}, \mathsf{meta} \rangle,
+\end{equation}
+where \(\mathsf{loan}\) is the principal amount, \(\mathsf{legs}\) is the flash-loan schedule, \(\mathsf{steps}\) is the ordered calldata path, \(\mathsf{offsets}\) is the optional block-offset vector, and \(\mathsf{meta}\) is objective-specific metadata such as estimated profit or objective-local annotations.
+
+Replay and report curation operate on witnesses, not on arbitrary solver models. This is an important boundary: the symbolic engine may reason over internal terms that never need to be surfaced, while reports consume a finite witness encoding that can be replayed or explained.
+
+\section{Small-Step Transition Semantics}
+\label{sec:small-step}
+
+\subsection{Transition relation}
+
+For a fixed bytecode image \(B\), DarkSolver defines a bounded symbolic transition relation
+\begin{equation}
+\label{eq:delta}
+\delta_B : \StateSpace \to \Pow(\StateSpace \cup \{\Fail,\Halt\}).
+\end{equation}
+
+The codomain of \(\delta_B\) is deliberately set-valued. A single opcode may produce:
 \begin{itemize}[leftmargin=1.5em]
-  \item \texttt{src/} contains the core Rust implementation,
-  \item \texttt{docs/} contains architecture and yellowpaper-style output,
-  \item \texttt{benchmarks/} contains manifest-driven evaluation harnesses, and
-  \item \texttt{reports/} contains example exploit writeups.
+  \item no successor, for example on terminal failure;
+  \item exactly one successor, for deterministic arithmetic or memory updates;
+  \item multiple successors, for branch-producing or path-splitting instructions.
 \end{itemize}
 
-This separation keeps exploratory work visible without diluting the core engine surface.
+The repository adopts a fail-closed semantics: if the engine cannot justify a permissive symbolic branch with the information available, it produces \(\Fail\) rather than a fabricated successor.
+
+\subsection{Representative rules}
+
+The implementation spans many opcodes, but a small set of rules captures the style of the semantics.
+
+\paragraph{Arithmetic.}
+For \(\texttt{ADD}\), if \(B[\PC] = \texttt{ADD}\) and the top stack words are \(x\) and \(y\),
+\begin{equation}
+\label{eq:add-rule}
+\frac{
+  \Stack = x :: y :: \Stack'
+}{
+  \delta_B(\Sigma)
+  \ni
+  \Sigma'
+}
+\quad
+\text{with}
+\quad
+\Sigma'
+=
+\Sigma[
+\PC \mapsto \PC + 1,\;
+\Stack \mapsto \operatorname{ADD}_{256}(x,y) :: \Stack'
+].
+\end{equation}
+The arithmetic operator is defined in \cref{sec:smt-encoding}; crucially, it remains in 256-bit space.
+
+\paragraph{Storage loads and writes.}
+For \(\texttt{SLOAD}\), the successor reads from the raw slot map \(\Storage\) and may additionally consult structured projections inferred from SHA3 traces. For \(\texttt{SSTORE}\), the successor updates the raw map and journals the previous value so later rollback or replay-sensitive accounting remains well-defined.
+
+\paragraph{Conditional control flow.}
+For \(\texttt{JUMPI}\), the engine may split the state when the branch guard \(g\) is symbolically satisfiable both true and false:
+\begin{equation}
+\label{eq:jumpi}
+\delta_B(\Sigma)
+\supseteq
+\left\{
+\Sigma[\PC \mapsto \mathsf{dst}, \Path \mapsto \Path \land g],
+\Sigma[\PC \mapsto \PC + 1, \Path \mapsto \Path \land \neg g]
+\right\}.
+\end{equation}
+If either target validation, stack discipline, or guard construction fails in a way that the engine cannot justify, the branch is terminated via \(\Fail\) rather than widened.
+
+\paragraph{SHA3 trace capture.}
+For hashing over memory windows whose preimage words can be recovered, the successor not only pushes a hash term but also appends a trace tuple to \(\Trace\). This side-channel is semantically important because later storage reasoning depends on it:
+\begin{equation}
+\label{eq:sha3-side-effect}
+\Sigma'
+=
+\Sigma[
+\Trace \mapsto \Trace \Concat \langle p, h, n, \PC \rangle,\;
+\Stack \mapsto h :: \Stack'
+].
+\end{equation}
+
+\paragraph{Calls.}
+The call semantics in the repository are bounded and analysis-oriented. Call instructions are not treated as unrestricted arbitrary-state transformers. Instead, the engine threads call-context data through symbolic state and objective-specific logic, while the hydration and verification layers provide the concrete target/dependency data needed to prevent unconstrained hallucinations.
+
+\paragraph{Terminal states.}
+The relation may yield \(\Halt\) for explicit terminal execution (stop, return, revert, halt) and \(\Fail\) for modeling failure, malformed state, or fail-closed rejection. These are semantically distinct: \(\Halt\) is an execution outcome, while \(\Fail\) is an analysis-policy outcome.
+
+\subsection{Fail-closed philosophy}
+
+DarkSolver's branch semantics intentionally prefer false negatives over unjustified false positives. This is visible beyond control flow:
+\begin{itemize}[leftmargin=1.5em]
+  \item malformed ABI decoding is not widened into ``some calldata'' success;
+  \item hydration uncertainty is not silently replaced by permissive concrete defaults;
+  \item worker failure in the parallel runner aborts the overall run rather than preserving partial findings.
+\end{itemize}
+
+The fail-closed principle is one of the repository's strongest alignment points between code and mathematics, so it reappears throughout later sections.
+
+\section{SMT Encoding}
+\label{sec:smt-encoding}
+
+\subsection{Bit-vector domain}
+
+The core solver domain is Z3's \QFABV{} fragment. Let
+\[
+\Words{256} = \Bits{256},
+\qquad
+\Words{512} = \Bits{512}.
+\]
+All symbolic EVM values are represented as fixed-width bit-vectors, not mathematical integers. This matters because EVM arithmetic is modular by definition.
+
+Representative arithmetic encodings are:
+\begin{align}
+\operatorname{ADD}_{256}(x,y) &= (x + y) \bmod 2^{256}, \label{eq:add256} \\
+\operatorname{SUB}_{256}(x,y) &= (x - y) \bmod 2^{256}, \label{eq:sub256} \\
+\operatorname{MUL}_{256}(x,y) &= (x \cdot y) \bmod 2^{256}. \label{eq:mul256}
+\end{align}
+
+When modular wrap-around would invalidate an economic comparison, the implementation lifts operands into a larger exact domain before multiplying or comparing:
+\begin{equation}
+\label{eq:lift512}
+\Lift{256}{512}(x) = \zeroextend_{256}(x),
+\qquad
+\operatorname{MUL}_{512}(x,y) = \Lift{256}{512}(x)\cdot \Lift{256}{512}(y).
+\end{equation}
+
+The invariant layer uses this exact lift to avoid accidental acceptance of wrapped reserve products or ratio numerators.
+
+\subsection{Concrete-to-symbolic conversion}
+
+The repository's concrete \(U256\)-to-bit-vector conversion avoids lossy string-round trips. A 256-bit word is decomposed into four 64-bit limbs and then concatenated:
+\begin{equation}
+\label{eq:u256-pack}
+\Word(u)
+=
+\operatorname{concat}(w_0, w_1, w_2, w_3),
+\end{equation}
+where \(w_i \in \Bits{64}\) are the big-endian limbs of \(u\). This detail is easy to dismiss as implementation trivia, but it is mathematically relevant: it preserves a total, width-correct embedding of concrete words into the symbolic domain.
+
+\subsection{Path formulas}
+
+The path predicate \(\Path\) is a formula in \QFABV{} over machine words, selector constants, calldata slices, balance terms, and objective-specific auxiliary variables. Path extension is conjunction:
+\begin{equation}
+\label{eq:path-extension}
+\Path_{k+1} = \Path_k \land \varphi_k.
+\end{equation}
+If \(\Path_k \land \varphi_k\) is provably infeasible, the corresponding branch is eliminated.
+
+\subsection{Address embedding}
+
+Although EVM addresses are 160-bit values, the symbolic engine embeds them into 256-bit words for uniformity:
+\begin{equation}
+\label{eq:address-embed}
+\operatorname{addr\_bv}(a) = \Word(\operatorname{be}_{256}(a)),
+\end{equation}
+where \(\operatorname{be}_{256}(a)\) denotes the 256-bit big-endian word formed by zero-extending the 20-byte address. This keeps address equality, hashing inputs, and storage-index derivations inside the same fixed-width domain.
+
+\subsection{Solver configuration}
+
+The current public build configures each solver context with deterministic seeds and explicit budgets:
+\begin{align}
+\mathsf{timeout} &= 60{,}000\ \mathrm{ms}, \\
+\mathsf{rlimit} &= 200{,}000{,}000, \\
+\mathsf{logic} &= \QFABV, \\
+\mathsf{random\_seed} &= 42.
+\end{align}
+The configuration also enables partial models. The intent is not to make satisfiability deterministic in every operational sense, but to remove avoidable nondeterminism from the solver interface itself.
+
+\begin{remark}
+The symbolic engine explicitly avoids a quantifier-heavy formulation. The current code comments note that global quantifiers were removed for tractability; the math in this paper therefore reflects a bounded quantifier-free regime, not a hidden higher-order proof system.
+\end{remark}
+
+\section{Storage and Keccak Abstraction}
+\label{sec:storage-keccak}
+
+\subsection{Raw and structured storage}
+
+DarkSolver maintains both a raw storage map and a structured shadow view inferred from hash traces. Formally, let
+\begin{equation}
+\label{eq:storage-views}
+\Storage = \Storage_{\mathrm{raw}} \cup \Storage_{\mathrm{shadow}},
+\end{equation}
+where \(\Storage_{\mathrm{raw}}\) maps concrete 256-bit slots to 256-bit words and \(\Storage_{\mathrm{shadow}}\) is a derived set of structured projections such as flat mappings, nested mappings, and dynamic arrays.
+
+The shadow view is never treated as independent truth. It is constrained by projection relations back to raw slots. This is essential because Ethereum storage semantics remain slot-based even when higher-level structure is inferred.
+
+\subsection{Trace tuples}
+
+When a memory hashing site yields a recoverable preimage, the engine records
+\begin{equation}
+\label{eq:trace-tuple}
+\tau = \langle p, h, n, \PC \rangle,
+\end{equation}
+where \(p\) is the symbolic preimage vector, \(h\) is the symbolic hash term, \(n\) is the traced byte width, and \(\PC\) is the program counter at the hash site.
+
+The trace log is therefore a finite sequence
+\begin{equation}
+\label{eq:trace-log}
+\Trace = (\tau_0,\tau_1,\ldots,\tau_{m-1}).
+\end{equation}
+The structure inference procedure is a partial classifier
+\begin{equation}
+\label{eq:infer}
+\Infer : \Trace^\ast \times \tau \to
+\{
+\mathsf{FlatMapping}(s),
+\mathsf{NestedMapping}(s,d),
+\mathsf{DynamicArray}(s),
+\mathsf{Unknown}
+\}.
+\end{equation}
+
+\subsection{Size-specialized uninterpreted functions}
+
+Bit-precise Keccak is too expensive for the intended workflow, so the repository uses size-specialized uninterpreted functions:
+\begin{align}
+K_{32} &: \Words{256} \to \Words{256}, \\
+K_{64} &: \Words{256}\times\Words{256} \to \Words{256}, \\
+K_{96} &: \Words{256}\times\Words{256}\times\Words{256} \to \Words{256}, \\
+K_{128} &: \Words{256}\times\Words{256}\times\Words{256}\times\Words{256} \to \Words{256}. \label{eq:keccak-families}
+\end{align}
+
+For a preimage composed of \(k \in \{1,2,3,4\}\) 256-bit words,
+\begin{equation}
+\label{eq:keccak-apply}
+\mathsf{Hash}(p_1,\ldots,p_k) =
+\begin{cases}
+K_{32}(p_1) & \text{if } k = 1, \\
+K_{64}(p_1,p_2) & \text{if } k = 2, \\
+K_{96}(p_1,p_2,p_3) & \text{if } k = 3, \\
+K_{128}(p_1,p_2,p_3,p_4) & \text{if } k = 4.
+\end{cases}
+\end{equation}
+Unexpected widths fall back to a fresh symbolic constant rather than to an unsoundly reused hash term.
+
+\subsection{Lazy injectivity}
+
+The repository does not globally assert full injectivity of Keccak UFs. Instead, it uses a local projection discipline that preserves parent-child consistency within traced storage chains. In abstract form:
+\begin{equation}
+\label{eq:lazy-injectivity}
+h_c = h'_c \Longrightarrow h_p = h'_p,
+\end{equation}
+where \(h_c,h'_c\) are child-hash terms and \(h_p,h'_p\) are the projected parent-hash terms in the same trace chain. This is weaker than cryptographic injectivity and stronger than totally unconstrained hashing.
+
+\begin{definition}[Soundness envelope of the Keccak abstraction]
+\label{def:keccak-envelope}
+The Keccak abstraction preserves equality, disequality, and locally traced projection relationships among bounded preimages. It does not prove collision resistance, preimage resistance, or completeness for untraced hash behaviors.
+\end{definition}
+
+\begin{remark}
+\Cref{def:keccak-envelope} is the right level of claim for the implementation. Anything stronger would be deceptive; anything weaker would fail to explain why structured storage recovery works at all.
+\end{remark}
+
+\section{Target Hydration and Bytecode Slicing}
+\label{sec:hydration}
+
+\subsection{Hydration function}
+
+The symbolic engine is only as useful as the target context it receives. DarkSolver therefore front-loads a hydration phase
+\begin{equation}
+\label{eq:hydrate}
+\Hydrate : (\Addr,\Gamma) \to \Ctx.
+\end{equation}
+
+The hydration output contains bytecode, account info, scanned storage slots, attacker-side token balance scaffolding, function selectors, NFT callback selectors, statically recognized dead-end PCs, and dependency contexts. The target context is stored thread-locally during objective execution so selector scans and related queries can reuse it without rehydration.
+
+\subsection{Strict empty-state classification}
+
+The strict zero-state marker from \cref{def:zero-state} can be written explicitly as
+\begin{equation}
+\label{eq:zero-state}
+\ZeroState(\Ctx)
+\Longleftrightarrow
+\big(
+\mathsf{code} = \varnothing
+\big)
+\land
+\big(
+\mathsf{bal}_{\mathrm{remote}} = 0
+\big)
+\land
+\big(
+\mathsf{scan\_ok} = \mathsf{true}
+\big)
+\land
+\big(
+\mathsf{nonzero\_slots} = \varnothing
+\big).
+\end{equation}
+If the storage scan fails, \(\ZeroState\) is false. This matters because a permissive empty-state default would manufacture false positives in liquidity and token-balance objectives.
+
+\subsection{Selector and bytecode slicing}
+
+Hydration also constructs a bytecode slice
+\begin{equation}
+\label{eq:bytecode-slice}
+\mathsf{slice}(B)
+=
+\langle
+\Selectors(B),
+\mathsf{nft\_callbacks}(B),
+\DeadEnds(B)
+\rangle,
+\end{equation}
+where \(\Selectors(B)\) is the set of state-changing selectors inferred from bytecode scanning, \(\mathsf{nft\_callbacks}(B)\) is the NFT callback slice, and \(\DeadEnds(B)\) is the set of dead-end program counters discovered by static heuristics.
+
+Hydration caches these slices and may reuse similar slices via SimHash-based classification. The point is not perfect bytecode clustering; the point is to avoid repeated bytecode rescans when enough structural similarity exists to justify reuse.
+
+\subsection{Proxy and dependency bounds}
+
+The public build uses explicit finite bounds during hydration. Representative defaults in the current repository include:
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Quantity & Default & Role \\
+\midrule
+proxy resolution max depth & \(3\) & bound nested proxy expansion \\
+diamond max facets & \(12\) & bound facet hydration fan-out \\
+storage scan limit & \(1024\) & bound direct slot enumeration \\
+deep-scan preloader storage limit & \(16{,}384\) & bound larger preload campaigns \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+These constants are not merely implementation conveniences. They define the semantic horizon of the hydrated target. A deeper proxy graph or a larger hidden storage footprint may exist on-chain without entering the public workflow's model.
+
+\section{Objective Synthesis}
+\label{sec:objectives}
+
+\subsection{Objective templates}
+
+An instantiated objective is best understood as a structured query generator
+\begin{equation}
+\label{eq:objective-template}
+o
+=
+\langle
+\mathsf{name},
+\Phi_o,
+\mathsf{witness}_o,
+\mathsf{policy}_o
+\rangle,
+\end{equation}
+where \(\Phi_o\) is the symbolic formula family generated for the target, \(\mathsf{witness}_o\) explains how solver models are reified into witness parameters, and \(\mathsf{policy}_o\) carries auxiliary bounds or metadata.
+
+The repository's objective catalog is intentionally protocol-aware. Publicly visible families include generic profit search, AMM price impact, PSM draining, collateral-factor lag, TWAP/oracle manipulation, liquidation spirals, governance exploitation, weak randomness, read-only reentrancy, delegatecall storage clash, vault inflation, share-rounding griefing, and composite risk synthesis. When deep scan is enabled, the catalog extends to deeper invariant analysis, reentrancy search, redemption arbitrage, dust bad debt creation, commit-reveal bypass, gambling-scanner logic, and related families.
+
+\subsection{Schedule hints and target-specific filtering}
+
+Objective generation depends on chain-aware hints. Fast chains are recognized by low block times, which influences deep-scan defaults, pseudo-randomness bounds, and time-drift windows. Objective families are then filtered by allowlists, denylists, and caps:
+\begin{equation}
+\label{eq:objective-filter}
+\Objectives'
+=
+\operatorname{Cap}_{N}
+\Big(
+\operatorname{Deny}_{D}
+\big(
+\operatorname{Allow}_{A}(\Objectives)
+\big)
+\Big).
+\end{equation}
+
+This composition should be read operationally:
+\begin{itemize}[leftmargin=1.5em]
+  \item \(\operatorname{Allow}_{A}\) retains only objective names matching explicit allow filters when such filters are present;
+  \item \(\operatorname{Deny}_{D}\) removes objective names matching deny filters;
+  \item \(\operatorname{Cap}_{N}\) truncates the remaining family to a finite target-specific cap.
+\end{itemize}
+
+\subsection{Semantic role of objective families}
+
+The catalog performs two jobs simultaneously.
+\begin{enumerate}[leftmargin=1.5em]
+  \item It reduces search space by encoding \emph{what counts as a relevant exploit hypothesis} for the target.
+  \item It increases semantic specificity by attaching domain constraints that generic opcode search would never infer, such as reserve-product or collateral-ratio relationships.
+\end{enumerate}
+
+In that sense, DarkSolver is closer to a family of targeted proof obligations than to a single monolithic vulnerability predicate.
+
+\section{Global Invariant Gates}
+\label{sec:gates}
+
+\subsection{Overview}
+
+Satisfiability alone is not a sufficient admission criterion. A candidate witness must also satisfy the repository's global invariant gate:
+\begin{equation}
+\label{eq:gate-overview}
+\Gate = G_{\solv} \land G_{\price} \land G_{\kgate}.
+\end{equation}
+
+These gates are especially important for AMM-like objectives, where a naive symbolic model can satisfy purely algebraic path constraints while violating obvious economic sanity.
+
+\subsection{Solvency gate}
+
+Let \(a^\star\) be the canonical attacker address and \(\ell\) the flash-loan principal. If \(\mathsf{bal}_{\Sigma}(a^\star)\) is the final attacker ETH balance term in the symbolic machine, then
+\begin{equation}
+\label{eq:solvency}
+G_{\solv}(\Sigma,\ell)
+\Longleftrightarrow
+\mathsf{bal}_{\Sigma}(a^\star) \ge \ell.
+\end{equation}
+
+This is intentionally strict. The gate does not accept a candidate that cannot at least service the modeled principal.
+
+\subsection{112-bit reserve normalization}
+
+The invariant layer manipulates packed AMM reserves that occupy 112-bit subwords in a 256-bit slot. The normalization operator is:
+\begin{equation}
+\label{eq:norm112}
+\Norm(x) = \zeroextend_{144}(x_{111:0}).
+\end{equation}
+
+Reserve positivity and finite-width checks are then:
+\begin{align}
+\label{eq:reserve-finite}
+G_{\mathrm{finite}}(r) &\Longleftrightarrow r_{255:112} = 0, \\
+\label{eq:reserve-positive}
+G_{\mathrm{positive}}(r) &\Longleftrightarrow r > 0.
+\end{align}
+
+\subsection{Price-sanity gate}
+
+Let \((r_0,r_1)\) be baseline reserves and \((r'_0,r'_1)\) the candidate reserves after the symbolic trace. The implementation compares cross-multiplied ratios in lifted 512-bit space. For a tolerance \(\beta\) basis points:
+\begin{equation}
+\label{eq:ratio-gap}
+G_{\mathrm{ratio},\beta}(r'_1,r'_0,r_1,r_0)
+\Longleftrightarrow
+\max\!\big(
+\Lift{256}{512}(\Norm(r'_1))\Lift{256}{512}(\Norm(r_0)),
+\Lift{256}{512}(\Norm(r_1))\Lift{256}{512}(\Norm(r'_0))
+\big)\cdot 10{,}000
+\le
+\min\!\big(
+\Lift{256}{512}(\Norm(r'_1))\Lift{256}{512}(\Norm(r_0)),
+\Lift{256}{512}(\Norm(r_1))\Lift{256}{512}(\Norm(r'_0))
+\big)\cdot (10{,}000 + \beta).
+\end{equation}
+
+The full price-sanity gate over all tracked pairs is
+\begin{equation}
+\label{eq:price-sanity}
+G_{\price}(\Sigma)
+\Longleftrightarrow
+\bigwedge_{p \in \operatorname{dom}(\Reserves)}
+\Big(
+G_{\mathrm{finite}}(r'_{0,p})
+\land
+G_{\mathrm{finite}}(r'_{1,p})
+\land
+G_{\mathrm{positive}}(r'_{0,p})
+\land
+G_{\mathrm{positive}}(r'_{1,p})
+\land
+G_{\mathrm{ratio},\beta_p}(r'_{1,p},r'_{0,p},r_{1,p},r_{0,p})
+\Big).
+\end{equation}
+
+\subsection{Reserve-product gate}
+
+To avoid modular artifacts, reserve-product comparisons are also lifted:
+\begin{equation}
+\label{eq:k-gate}
+G_{\kgate}(\Sigma)
+\Longleftrightarrow
+\bigwedge_{p \in \operatorname{dom}(\Reserves)}
+\Lift{256}{512}(\Norm(r'_{0,p}))\cdot \Lift{256}{512}(\Norm(r'_{1,p}))
+\ge
+\Lift{256}{512}(\Norm(r_{0,p}))\cdot \Lift{256}{512}(\Norm(r_{1,p})).
+\end{equation}
+
+\subsection{Admission}
+
+For an objective-generated witness \(w\), symbolic admission can therefore be stated as
+\begin{equation}
+\label{eq:symbolic-admit}
+\mathsf{Admit}_{\mathrm{sym}}(w)
+\Longleftrightarrow
+\sat(\Phi_w)
+\land
+\Gate(w).
+\end{equation}
+
+Equation~\eqref{eq:symbolic-admit} is a necessary but not always sufficient criterion for publication-grade evidence, because replay and curation policy may impose stricter requirements.
+
+\section{Parallel Execution and Determinism}
+\label{sec:parallel}
+
+\subsection{Independent solver contexts}
+
+Each objective is solved in its own blocking worker and its own Z3 context. This is both a technical necessity and a semantic convenience. It is a necessity because Z3 contexts are not freely shareable across threads. It is a convenience because it prevents objective-local search state from leaking across objectives.
+
+Let \(\Objectives' = \{o_1,\ldots,o_n\}\). The detailed runner computes
+\begin{equation}
+\label{eq:parallel-run}
+\mathsf{Run}(\Objectives', B, \Ctx, \tau_{\mathrm{tot}})
+=
+\big(
+\mathcal{R}_{\Status},
+\mathcal{F}
+\big),
+\end{equation}
+where \(\mathcal{R}_{\Status}\) is the status-record set and \(\mathcal{F}\) is the set of satisfiable findings.
+
+\subsection{Status semantics}
+
+Each objective yields a status in
+\begin{equation}
+\label{eq:status-domain}
+\Status \in \{\sat,\unsat,\timeout,\panicstatus\}.
+\end{equation}
+
+These should be read precisely.
+\begin{itemize}[leftmargin=1.5em]
+  \item \(\sat\): the objective produced witness parameters.
+  \item \(\unsat\): the objective completed without producing witness parameters.
+  \item \(\panicstatus\): the objective panicked and the panic payload was captured.
+  \item \(\timeout\): the total audit timeout expired before that objective completed, so the runner marks the objective as timed out and aborts pending work on a best-effort basis.
+\end{itemize}
+
+\subsection{Determinism boundary}
+
+DarkSolver deliberately makes the following quantities stable or nearly stable.
+\begin{enumerate}[leftmargin=1.5em]
+  \item Solver parameterization uses fixed seeds and explicit budgets.
+  \item The detailed runner sorts status records by objective name before returning them.
+  \item Objective allowlist/denylist/cap logic is deterministic for fixed inputs.
+\end{enumerate}
+
+It does \emph{not} claim stable completion order of parallel workers or stable ordering of simple finding vectors when those depend on task completion order. The right mathematical statement is therefore \emph{set-level determinism under fixed solver semantics}, not sequence-level determinism of every emitted list.
+
+\subsection{Fail-closed worker handling}
+
+If any worker panics or is cancelled in the basic parallel runner, the entire run returns an error instead of emitting partial findings. The code therefore implements the following policy:
+\begin{equation}
+\label{eq:worker-fail-closed}
+\exists i \;.\; \mathsf{worker\_failed}(o_i)
+\Longrightarrow
+\mathsf{Run}_{\mathrm{basic}}(\Objectives',B,\Ctx) = \mathsf{Err}.
+\end{equation}
+
+This is a meaningful semantic commitment: the repository would rather lose evidence than mix trustworthy and untrustworthy objective outcomes in the same result set.
+
+\section{Replay Validation Semantics}
+\label{sec:replay}
+
+\subsection{Repository position}
+
+The replay/verifier layer is implemented in the repository and is suitable for curated evidence, but it should be described carefully. The default public single-target command path emphasizes solving and objective status. Replay validation is therefore best viewed as a \emph{companion semantics for witness curation}, not as a claim that every CLI path runs a mandatory replay phase before returning.
+
+\subsection{Replay input and execution}
+
+Given a witness \(w\), a chain environment \(\Gamma\), and an attacker address \(a^\star\), the verifier constructs a replay report
+\begin{equation}
+\label{eq:replay}
+\Replay(w,\Gamma,a^\star) = \rho.
+\end{equation}
+
+Operationally, the verifier:
+\begin{enumerate}[leftmargin=1.5em]
+  \item initializes a forked database, optionally pinned to a historical block;
+  \item reads the attacker's initial ETH and tracked-token balances;
+  \item applies any modeled flash-loan inventory to the fork state;
+  \item groups witness steps by block offsets;
+  \item executes each step against \texttt{revm}, advancing block context when offsets require it;
+  \item records the first failing step, revert payload, halt reason, and gas use if execution does not remain successful;
+  \item re-reads ETH and tracked-token balances after execution;
+  \item computes a mark-to-market report over initial and final holdings.
+\end{enumerate}
+
+The current per-step gas limit in the verifier is \(2{,}000{,}000\) gas. This is another explicit bound rather than a hidden assumption.
+
+\subsection{Report structure}
+
+The replay report contains at least the following fields:
+\begin{equation}
+\label{eq:report-shape}
+\rho =
+\langle
+\mathsf{success},
+\Profit,
+\mathsf{gas\_used},
+\mathsf{failed\_step},
+\mathsf{initial\_eth},
+\mathsf{final\_eth},
+\mathsf{token\_deltas},
+\mathsf{initial\_value},
+\mathsf{final\_value},
+\mathsf{gas\_cost},
+\mathsf{priced},
+\mathsf{unpriced},
+\mathsf{stale},
+\mathsf{error}
+\rangle.
+\end{equation}
+
+This report is richer than a Boolean replay verdict. It is designed to support downstream policies that care about profitability, asset-coverage quality, and stale valuation inputs.
+
+\subsection{Mark-to-market valuation}
+
+Let \(U\) be the set of tracked tokens. For a token \(u \in U\), let \(\mathsf{bal}^{(t)}_u(a^\star)\) be the attacker's token balance at time \(t \in \{0,1\}\), \(\mathsf{dec}(u)\) its decimals, and \(\mathsf{price}(u)\) its ETH price proxy or override. Then
+\begin{equation}
+\label{eq:valuation}
+\Val_t(a^\star)
+=
+\mathsf{ETH}^{(t)}(a^\star)
++ \sum_{u \in U}
+\frac{
+\mathsf{bal}^{(t)}_u(a^\star)\cdot \mathsf{price}(u)
+}{
+10^{\mathsf{dec}(u)}
+}.
+\end{equation}
+
+Let \(\mathsf{basefee}\) be the observed base fee and \(\mathsf{tip}\) the configured priority fee. The estimated gas cost is
+\begin{equation}
+\label{eq:gas-cost}
+\mathsf{GasCost} = (\mathsf{basefee} + \mathsf{tip}) \cdot \mathsf{gas\_used}.
+\end{equation}
+
+With a configured minimum margin \(m_{\min}\), profitability is:
+\begin{equation}
+\label{eq:profitability}
+\Profit(\rho)
+\Longleftrightarrow
+\Val_1(a^\star)
+>
+\Val_0(a^\star)
++
+\mathsf{GasCost}
++
+m_{\min}.
+\end{equation}
+
+\subsection{Replay-based reportability}
+
+Because different consumers may want different thresholds, the clean formulation is policy-parametric:
+\begin{equation}
+\label{eq:reportable}
+\Reportable_{\Pi}(w,\rho)
+\Longleftrightarrow
+\mathsf{Admit}_{\mathrm{sym}}(w)
+\land
+\Pi(\rho).
+\end{equation}
+
+A typical strict publication policy is
+\begin{equation}
+\label{eq:strict-policy}
+\Pi_{\mathrm{strict}}(\rho)
+\Longleftrightarrow
+\rho.\mathsf{success}
+\land
+\rho.\Profit
+\land
+(\rho.\mathsf{stale} = 0).
+\end{equation}
+
+Equation~\eqref{eq:strict-policy} is not hard-coded as the only admissibility rule in the repository; it is a principled example of how the verifier data can be consumed.
+
+\section{Correctness Posture}
+\label{sec:correctness}
+
+This section states concrete propositions the current implementation actually supports. They are intentionally narrower than full language-level soundness theorems.
+
+\begin{proposition}[Width-preserving arithmetic]
+\label{prop:width}
+If symbolic operands are represented in \(\Words{256}\), then arithmetic performed by the core symbolic engine remains within \(\Words{256}\), and comparisons that must avoid wrap-around are explicitly lifted into \(\Words{512}\).
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+The symbolic engine constructs arithmetic terms using Z3 bit-vector operators over fixed widths. The concrete embedding of \(U256\) words is a total concatenation of four 64-bit limbs, so the symbolic sort is exactly 256 bits. When the invariant layer compares reserve products or ratio numerators, it first applies zero-extension into 512 bits before multiplying. Because the compared reserve quantities are at most 112 bits after normalization, their products fit comfortably within the 512-bit domain and therefore do not wrap.
+\end{proof}
+
+\begin{proposition}[Strict zero-state classification]
+\label{prop:zero-state}
+The hydration layer cannot classify a target as \(\ZeroState\) unless bytecode is empty, remote balance is zero or absent, storage scanning succeeded, and no non-zero storage slots were found.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+The implementation computes the zero-state flag by conjunction of exactly those checks. In particular, storage scan failure returns false rather than ``unknown but probably empty.'' Therefore every positive \(\ZeroState\) classification is justified by explicit evidence, while some true empty states may remain unclassified if hydration is incomplete.
+\end{proof}
+
+\begin{proposition}[Fail-closed worker semantics]
+\label{prop:fail-closed-workers}
+In the basic parallel objective runner, if any worker panics or is cancelled, the run returns an error and does not emit a trusted finding set.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+The runner gathers worker results through a join set. Panic and cancellation outcomes are collected as worker failures. If any such failure occurs, the runner returns an error after logging the details, instead of returning accumulated findings. Therefore the basic runner never conflates partial success with trustworthy aggregate success.
+\end{proof}
+
+\begin{proposition}[Exact reserve-product comparison after normalization]
+\label{prop:k-exact}
+For normalized reserve words \(x,y,x',y' \in \Words{112}\), the invariant check
+\[
+\Lift{256}{512}(x)\Lift{256}{512}(y)
+\ge
+\Lift{256}{512}(x')\Lift{256}{512}(y')
+\]
+is an exact arithmetic comparison, not a modular approximation.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Each normalized reserve fits in 112 bits. The product of two 112-bit values fits in 224 bits. Zero-extending into 512 bits before multiplication therefore preserves the exact integer product. No wrap-around can occur within 512 bits, so the comparison is exact for the normalized reserve domain used by the gate.
+\end{proof}
+
+\subsection{Non-claims}
+
+The repository does \emph{not} currently justify the following stronger claims.
+\begin{enumerate}[leftmargin=1.5em]
+  \item Completeness over all selectors, all paths, or all objective families.
+  \item Cryptographically faithful reasoning about Keccak.
+  \item Sound profitability under complete market microstructure and slippage modeling.
+  \item Stable ordering of all emitted findings under parallel completion races.
+  \item Full replay validation as an unconditional property of every public command path.
+\end{enumerate}
+
+This distinction between propositions and non-claims is not academic hygiene for its own sake. It is necessary to keep the paper aligned with the repository's public behavior.
+
+\section{Complexity and Resource Model}
+\label{sec:complexity}
+
+\subsection{Search complexity}
+
+The underlying satisfiability problem is, in the worst case, as hard as the objective-generated \QFABV{} formulas permit. Path explosion, selector fan-out, and protocol-specific side conditions all contribute. A fully general complexity theorem would not be useful because the repository is not intended to run unconstrained search. The right complexity statement is conditional on the bounding regime.
+
+Let \(n\) be the number of objectives after allow/deny/cap filtering, \(s_i\) the selector family relevant to objective \(o_i\), \(d_i\) the symbolic step bound embedded in that objective, and \(h_i\) the hydration footprint visible to that objective. Then a coarse operational upper bound is
+\begin{equation}
+\label{eq:complexity-bound}
+T_{\mathrm{run}}
+\lesssim
+\sum_{i=1}^{n}
+T_{\mathrm{solve}}
+\big(
+|s_i|,
+d_i,
+|h_i|,
+|\Phi_{o_i}|
+\big),
+\end{equation}
+where \(T_{\mathrm{solve}}\) is additionally clipped by solver timeout and resource limits.
+
+\subsection{Implemented bounds}
+
+The public repository uses several explicit bounds to make \cref{eq:complexity-bound} meaningful in practice.
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Bound & Current default & Effect \\
+\midrule
+per-solver timeout & \(60{,}000\) ms & clips individual solver contexts \\
+solver rlimit & \(200{,}000{,}000\) & clips low-level resource usage \\
+telemetry solve budget target & \(1{,}800\) ms & operator-facing pressure target \\
+global price sanity tolerance & \(250{,}000\) bps & clips admissible reserve drift \\
+per-step replay gas limit & \(2{,}000{,}000\) gas & clips replay execution cost \\
+proxy depth & \(3\) & clips recursive hydration \\
+diamond facet count & \(12\) & clips facet fan-out \\
+direct storage scan & \(1024\) slots & clips immediate storage enumeration \\
+deep preload storage cap & \(16{,}384\) slots & clips heavier preloading \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Operational interpretation}
+
+These bounds imply three practical consequences.
+\begin{enumerate}[leftmargin=1.5em]
+  \item The workflow is engineered to degrade by timeout or fail-closed rejection, not by silent widening.
+  \item Complexity is partly shifted from path depth to objective design: a better objective family can dominate a deeper generic search.
+  \item Performance claims must be interpreted as contingent on the chosen bounds, not as asymptotic guarantees about unbounded symbolic execution.
+\end{enumerate}
+
+\section{Limitations and Threats to Validity}
+\label{sec:limitations}
+
+\subsection{Boundedness}
+
+The strongest limitation is also the central engineering choice: bounded search. If an exploit requires selectors outside the scanned slice, proxy expansion beyond the configured depth, storage dependencies outside the scan horizon, or a longer multi-step trace than the relevant objective considers, the repository may miss it.
+
+\subsection{Hash abstraction}
+
+The Keccak abstraction is deliberately incomplete. Size-specialized uninterpreted functions preserve structured dependence for traced preimages, but they do not model collisions, preimage structure outside recorded traces, or exact digest-level bit arithmetic. This is acceptable for storage-structure recovery; it is not enough for cryptographic proof obligations.
+
+\subsection{Hydration dependence}
+
+The quality of the symbolic model depends on RPC hydration. Bytecode, account info, storage slots, proxy metadata, and dependency contexts are all hydrated from chain state. Weak or rate-limited RPC responses can degrade coverage or force fail-closed behavior. This is why the repository includes separate RPC benchmarking and operational telemetry tooling.
+
+\subsection{Replay coverage}
+
+Replay validation is richer than satisfiability, but it is still a bounded simulation over a forked state. It does not inherently model builder behavior, mempool competition, or all real-world execution externalities. Even the profitability layer depends on price proxies, configured overrides, and stale-price thresholds.
+
+\subsection{Policy dependence}
+
+What counts as ``reportable'' is downstream-policy dependent. Some operators may accept \(\rho.\mathsf{success}\) alone. Others may require strict profitability, no stale prices, or even external human confirmation. This is why \(\Reportable_{\Pi}\) is parameterized in \cref{eq:reportable}.
+
+\subsection{Determinism limits}
+
+Although solver seeds and status-record ordering are stabilized where practical, parallel execution and remote hydration mean that some operational outputs remain sensitive to environment and runtime timing. The correct claim is reproducibility under controlled conditions, not absolute environment-free determinism.
+
+\section{Conclusion}
+
+DarkSolver is best understood as a bounded formal-analysis primitive for EVM business-logic search. Its value does not come from pretending to solve arbitrary contract verification in one stroke. It comes from an explicit combination of ingredients that fit the actual repository:
+\begin{enumerate}[leftmargin=1.5em]
+  \item width-correct symbolic EVM semantics in \QFABV{};
+  \item target hydration that exposes selectors, dependencies, and strict empty-state classification;
+  \item protocol-aware objective synthesis instead of undifferentiated path search;
+  \item triple-gate invariant filtering to suppress economically nonsensical models;
+  \item fail-closed parallel execution and structured status reporting;
+  \item replay-oriented report construction for stricter downstream curation.
+\end{enumerate}
+
+That combination is rigorous enough to merit whitepaper treatment precisely because it does not overclaim. The repository's mathematics are strongest where its implementation is most explicit: boundedness, width preservation, structured storage inference, invariant gating, and evidence-oriented workflow design. Those are the claims that should survive close comparison between the PDF and the codebase.
+
+\begin{thebibliography}{99}
+
+\bibitem{wood2014ethereum}
+Gavin Wood.
+\newblock Ethereum: A secure decentralised generalised transaction ledger.
+\newblock Yellow Paper, originally released 2014 and maintained in later revisions.
+\newblock \url{https://ethereum.github.io/yellowpaper/paper.pdf}
+
+\bibitem{demoura2008z3}
+Leonardo de Moura and Nikolaj Bj{\o}rner.
+\newblock Z3: An efficient SMT solver.
+\newblock In \emph{Proceedings of TACAS 2008}, pages 337--340, 2008.
+
+\bibitem{barrett2010smtlib}
+Clark Barrett, Aaron Stump, and Cesare Tinelli.
+\newblock The SMT-LIB standard: Version 2.0.
+\newblock Technical report, 2010.
+\newblock \url{https://smtlib.cs.uiowa.edu/}
+
+\bibitem{king1976symbolic}
+James C. King.
+\newblock Symbolic execution and program testing.
+\newblock \emph{Communications of the ACM}, 19(7):385--394, 1976.
+
+\bibitem{cadar2013symbolic}
+Cristian Cadar and Koushik Sen.
+\newblock Symbolic execution for software testing: Three decades later.
+\newblock \emph{Communications of the ACM}, 56(2):82--90, 2013.
+
+\bibitem{revm}
+Bluealloy contributors.
+\newblock revm: Rust Ethereum virtual machine implementation.
+\newblock Software project.
+\newblock \url{https://github.com/bluealloy/revm}
+
+\bibitem{z3guide}
+Microsoft Research.
+\newblock Z3 Guide.
+\newblock Documentation resource.
+\newblock \url{https://microsoft.github.io/z3guide/}
+
+\bibitem{alloy}
+Alloy contributors.
+\newblock Alloy: modular Rust toolkit for Ethereum.
+\newblock Software project.
+\newblock \url{https://github.com/alloy-rs/alloy}
+
+\end{thebibliography}
 
 \end{document}
