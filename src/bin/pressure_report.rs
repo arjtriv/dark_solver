@@ -186,4 +186,14 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn parse_args_from_iter_rejects_invalid_window() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+
+        let err =
+            parse_args_from_iter(["--window-secs", "abc"]).expect_err("invalid window should fail");
+        assert!(err.to_string().contains("invalid window"));
+    }
 }
