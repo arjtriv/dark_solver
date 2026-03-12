@@ -243,4 +243,13 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn parse_args_from_iter_rejects_empty_url_set() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+
+        let err = parse_args_from_iter(Vec::<String>::new()).expect_err("empty urls should fail");
+        assert!(err.to_string().contains("no RPC URLs provided"));
+    }
 }
